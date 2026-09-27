@@ -38,6 +38,7 @@ import com.google.mlkit.vision.segmentation.subject.SubjectSegmentation
 import com.google.mlkit.vision.segmentation.subject.SubjectSegmenter
 import com.google.mlkit.vision.segmentation.subject.SubjectSegmenterOptions
 import io.github.sceneview.ar.ARSceneView
+import java.nio.FloatBuffer
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
@@ -342,8 +343,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun applyPersonMask(mask: FloatArray, imageWidth: Int, imageHeight: Int, frame: Frame) {
-        if (mask.isEmpty()) return
+    private fun applyPersonMask(mask: FloatBuffer?, imageWidth: Int, imageHeight: Int, frame: Frame) {
+        if (mask == null || !mask.hasRemaining()) return
+        val confidence = FloatArray(mask.remaining())
+        mask.rewind()
+        mask.get(confidence)
 
         val stepY = max(5, imageHeight / 120)
         val points = ArrayList<Float>(256)
@@ -358,7 +362,7 @@ class MainActivity : AppCompatActivity() {
             var right = -1
             for (x in 0 until imageWidth step stepY) {
                 val index = y * imageWidth + x
-                if (index < mask.size && mask[index] > 0.55f) {
+                if (index < confidence.size && confidence[index] > 0.55f) {
                     left = min(left, x)
                     right = max(right, x)
                     if (y < topY) {
@@ -477,7 +481,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateFloorBoundary(frame: Frame) {
-        val plane = frame.session.getAllTrackables(Plane::class.java)
+        val session = arSession ?: run {
+            measurementOverlay.clearAutoFloorOutline()
+            return
+        }
+        val plane = session.getAllTrackables(Plane::class.java)
             .filter {
                 it.trackingState == TrackingState.TRACKING &&
                     it.subsumedBy == null &&
