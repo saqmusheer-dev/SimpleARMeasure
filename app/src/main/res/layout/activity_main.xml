@@ -200,6 +200,30 @@
         android:paddingEnd="18dp"
         android:paddingBottom="84dp">
 
+        <Button
+            android:id="@+id/scanNowButton"
+            android:layout_width="210dp"
+            android:layout_height="52dp"
+            android:layout_marginTop="6dp"
+            android:text="SCAN NOW"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/segmentText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="5dp"
+            android:background="#CC000000"
+            android:gravity="center"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:paddingTop="5dp"
+            android:paddingBottom="5dp"
+            android:textColor="@android:color/white"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
         <TextView
             android:id="@+id/distanceText"
             android:layout_width="wrap_content"
@@ -213,8 +237,54 @@
             android:paddingBottom="8dp"
             android:text="—"
             android:textColor="@android:color/white"
+            android:visibility="gone"
             android:textSize="27sp"
             android:textStyle="bold" />
+
+        <LinearLayout
+            android:id="@+id/areaTools"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="7dp"
+            android:gravity="center"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <Button
+                android:id="@+id/penButton"
+                android:layout_width="72dp"
+                android:layout_height="42dp"
+                android:layout_marginEnd="4dp"
+                android:minWidth="0dp"
+                android:text="✎ PEN"
+                android:textSize="10sp" />
+
+            <Button
+                android:id="@+id/eraserButton"
+                android:layout_width="78dp"
+                android:layout_height="42dp"
+                android:layout_marginEnd="4dp"
+                android:minWidth="0dp"
+                android:text="⌫ ERASE"
+                android:textSize="10sp" />
+
+            <Button
+                android:id="@+id/undoAreaButton"
+                android:layout_width="72dp"
+                android:layout_height="42dp"
+                android:minWidth="0dp"
+                android:text="↶ UNDO"
+                android:textSize="10sp" />
+
+            <Button
+                android:id="@+id/doneAreaButton"
+                android:layout_width="72dp"
+                android:layout_height="42dp"
+                android:layout_marginStart="4dp"
+                android:minWidth="0dp"
+                android:text="DONE"
+                android:textSize="10sp" />
+        </LinearLayout>
 
         <Button
             android:id="@+id/finishAreaButton"
