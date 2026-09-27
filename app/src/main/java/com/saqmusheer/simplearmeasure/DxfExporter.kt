@@ -6,9 +6,11 @@ object DxfExporter {
     fun export(project: LocalProject): String {
         val sb = StringBuilder()
         sb.append("0\nSECTION\n2\nHEADER\n")
-        sb.append("9\n\$ACADVER\n1\nAC1009\n")
+        sb.append("9\n\$ACADVER\n1\nAC1015\n")
         sb.append("9\n\$INSUNITS\n70\n4\n")
-        sb.append("0\nENDSEC\n0\nSECTION\n2\nENTITIES\n")
+        sb.append("0\nENDSEC\n")
+        appendLayerTable(sb)
+        sb.append("0\nSECTION\n2\nENTITIES\n")
         project.measurements.forEachIndexed { index, measurement ->
             val layer = layerFor(measurement.mode)
             val points = measurement.points
@@ -35,6 +37,20 @@ object DxfExporter {
         text(sb, "SMA-TEXT", 0f, -0.5f, "SimpleARMeasure - ${project.name}")
         sb.append("0\nENDSEC\n0\nEOF\n")
         return sb.toString()
+    }
+
+    private fun appendLayerTable(sb: StringBuilder) {
+        val layers = listOf(
+            "SMA-WALL", "SMA-DOOR", "SMA-WINDOW", "SMA-FLOOR",
+            "SMA-DIMENSION", "SMA-ELECTRICAL", "SMA-PLUMBING",
+            "SMA-FURNITURE", "SMA-CABINET", "SMA-MEASUREMENT", "SMA-TEXT"
+        )
+        sb.append("0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nLAYER\n70\n")
+            .append(layers.size).append("\n")
+        layers.forEach { layer ->
+            sb.append("0\nLAYER\n2\n").append(layer).append("\n70\n0\n62\n7\n6\nCONTINUOUS\n")
+        }
+        sb.append("0\nENDTAB\n0\nENDSEC\n")
     }
 
     private fun layerFor(mode: String): String = when {
