@@ -36,11 +36,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var distanceText: TextView
     private lateinit var modeText: TextView
     private lateinit var measurementOverlay: MeasurementOverlayView
+    private lateinit var licenseManager: LicenseManager
 
     private var latestFrame: Frame? = null
     private var firstAnchor: Anchor? = null
     private var secondAnchor: Anchor? = null
     private var measureMode = MeasureMode.FLOOR
+    private val areaAnchors = mutableListOf<Anchor>()
 
     private val cameraPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -53,6 +55,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        licenseManager = LicenseManager(this)
+        if (!licenseManager.isLicensed()) { showLicenseScreen(); return }
+        setupMainUi()
+    }
+
+    private fun setupMainUi() {
         setContentView(R.layout.activity_main)
 
         arSceneView = findViewById(R.id.arSceneView)
@@ -64,6 +72,8 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.floorButton).setOnClickListener { selectMode(MeasureMode.FLOOR) }
         findViewById<Button>(R.id.heightButton).setOnClickListener { selectMode(MeasureMode.HEIGHT) }
         findViewById<Button>(R.id.directButton).setOnClickListener { selectMode(MeasureMode.DIRECT) }
+        findViewById<Button>(R.id.areaButton).setOnClickListener { selectMode(MeasureMode.AREA) }
+        findViewById<Button>(R.id.finishAreaButton).setOnClickListener { finishArea() }
         findViewById<Button>(R.id.resetButton).setOnClickListener { resetMeasurement() }
 
         selectMode(MeasureMode.FLOOR)
@@ -72,7 +82,18 @@ class MainActivity : AppCompatActivity() {
         else cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
     }
 
-    private fun startAr() {
+    private fun showLicenseScreen() {
+        val root = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.VERTICAL; gravity = android.view.Gravity.CENTER; setPadding(42,24,42,24); setBackgroundColor(0xFF151122.toInt()) }
+        val title = TextView(this).apply { text = "Simple AR Measure"; textSize = 30f; setTextColor(0xFFFFFFFF.toInt()); typeface = android.graphics.Typeface.DEFAULT_BOLD; gravity = android.view.Gravity.CENTER }
+        val subtitle = TextView(this).apply { text = "Enter your activation key"; textSize = 17f; setTextColor(0xFFD8D1E8.toInt()); gravity = android.view.Gravity.CENTER; setPadding(0,16,0,22) }
+        val input = android.widget.EditText(this).apply { hint = "Activation key"; setSingleLine(true) }
+        val activate = Button(this).apply { text = "ACTIVATE" }
+        activate.setOnClickListener { val result = licenseManager.activate(input.text.toString()); if (result.first) setupMainUi() else Toast.makeText(this,result.second,Toast.LENGTH_LONG).show() }
+        root.addView(title); root.addView(subtitle); root.addView(input,android.widget.LinearLayout.LayoutParams(-1,-2)); root.addView(activate,android.widget.LinearLayout.LayoutParams(-1,-2).apply{topMargin=18})
+        setContentView(root)
+    }
+
+    private fun startAr()
         statusText.text = "Floor mode • Tap the first point."
         arSceneView.lifecycle = lifecycle
 
@@ -128,6 +149,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun measureAt(x: Float, y: Float) {
+        if (measureMode == MeasureMode.AREA) { measureAreaAt(x,y); return }
         val frame = latestFrame ?: run {
             Toast.makeText(this, "AR is still starting. Try again.", Toast.LENGTH_SHORT).show()
             return
@@ -185,6 +207,23 @@ class MainActivity : AppCompatActivity() {
 
         measurementOverlay.setSecondPoint(x, y)
         showDistance(meters)
+    }
+
+    private fun measureAreaAt(x: Float, y: Float) {
+        val frame = latestFrame ?: return
+        val hit = frame.hitTest(x,y).firstOrNull { it.trackable?.trackingState == TrackingState.TRACKING && ((it.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING || it.trackable is DepthPoint || it.trackable is Point) } ?: run { Toast.makeText(this,"Aim at a kitchen/floor corner and tap.",Toast.LENGTH_SHORT).show(); return }
+        createAnchorSafely(hit)?.let { areaAnchors.add(it); measurementOverlay.addAreaPoint(x,y); distanceText.text = areaAnchors.size.toString()+" points"; findViewById<Button>(R.id.finishAreaButton).visibility = if(areaAnchors.size>=3) android.view.View.VISIBLE else android.view.View.GONE; statusText.text = "Area outline • tap the next corner or Finish." }
+    }
+
+    private fun finishArea() {
+        if (areaAnchors.size < 3) return
+        val p = areaAnchors.map { it.pose }
+        var area = 0f
+        for (i in p.indices) { val j=(i+1)%p.size; area += p[i].tx()*p[j].tz()-p[j].tx()*p[i].tz() }
+        area = abs(area)/2f
+        measurementOverlay.closeArea()
+        distanceText.text = String.format(Locale.US,"%.2f m²\\n%.1f ft²",area,area*10.7639104f)
+        statusText.text = "Area measured • Tap Reset for a new outline."
     }
 
     private fun findBestHit(frame: Frame, x: Float, y: Float): HitResult? {
@@ -250,9 +289,12 @@ class MainActivity : AppCompatActivity() {
     private fun resetMeasurement() {
         firstAnchor?.detach()
         secondAnchor?.detach()
+        areaAnchors.forEach { it.detach() }
+        areaAnchors.clear()
         firstAnchor = null
         secondAnchor = null
         measurementOverlay.clear()
+        findViewById<Button>(R.id.finishAreaButton)?.visibility = android.view.View.GONE
         distanceText.text = "—"
 
         if (::statusText.isInitialized) {
@@ -266,6 +308,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         firstAnchor?.detach()
         secondAnchor?.detach()
+        areaAnchors.forEach { it.detach() }
         super.onDestroy()
     }
 }
