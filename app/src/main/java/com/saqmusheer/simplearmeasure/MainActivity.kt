@@ -6,7 +6,9 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.location.LocationManager
 import android.media.Image
+import android.content.Intent
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.Gravity
@@ -14,6 +16,7 @@ import android.view.MotionEvent
 import android.view.Surface
 import android.view.View
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.Switch
 import android.widget.TextView
@@ -62,6 +65,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var modeText: TextView
     private lateinit var measurementOverlay: MeasurementOverlayView
     private lateinit var licenseManager: LicenseManager
+    private lateinit var localStore: LocalProjectStore
+
+    private var projects = mutableListOf<LocalProject>()
+    private var currentProjectId: String? = null
+    private var pendingDxf: String? = null
+    private var lastAutoPolygonWorld = emptyList<LocalPoint>()
+    private var lastAutoAreaM2 = 0f
 
     private var latestFrame: Frame? = null
     private var arSession: Session? = null
@@ -92,9 +102,50 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+    private val photoPickerLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) {
+                try {
+                    contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                } catch (_: Exception) { }
+                val project = currentProject()
+                if (project != null) {
+                    localStore.addPhoto(project, uri.toString(), projects)
+                    Toast.makeText(this, "Photo added to " + project.name, Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this, "Create/select a project first.", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+
+    private val locationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            saveCurrentProjectLocation()
+        }
+
+    private val dxfCreatorLauncher =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/dxf")) { uri ->
+            val content = pendingDxf
+            pendingDxf = null
+            if (uri != null && content != null) {
+                try {
+                    contentResolver.openOutputStream(uri)?.use {
+                        it.write(content.toByteArray(Charsets.UTF_8))
+                    }
+                    Toast.makeText(this, "DXF exported successfully.", Toast.LENGTH_LONG).show()
+                } catch (e: Exception) {
+                    Toast.makeText(this, "DXF export failed: " + e.message, Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         licenseManager = LicenseManager(this)
+        localStore = LocalProjectStore(this)
+        projects = localStore.loadProjects()
+        currentProjectId = getSharedPreferences("local_projects_ui", MODE_PRIVATE).getString("current_project_id", null)
+        if (currentProjectId != null && projects.none { it.id == currentProjectId }) currentProjectId = null
         if (!licenseManager.isLicensed()) {
             showLicenseScreen()
             return
@@ -128,6 +179,8 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.finishAreaButton).setOnClickListener { finishArea() }
         findViewById<Button>(R.id.resetButton).setOnClickListener { resetMeasurement() }
         findViewById<Button>(R.id.settingsButton).setOnClickListener { showSettings() }
+        findViewById<Button>(R.id.projectsButton).setOnClickListener { showProjects() }
+        findViewById<Button>(R.id.saveButton).setOnClickListener { saveCurrentMeasurement() }
 
         measurementOverlay.setOnTouchListener { _, event ->
             if (event.action == MotionEvent.ACTION_UP) {
@@ -138,6 +191,7 @@ class MainActivity : AppCompatActivity() {
 
         findViewById<View>(R.id.rulerView).visibility = if (showRuler) View.VISIBLE else View.GONE
         selectMode(MeasureMode.FLOOR)
+        updateProjectStatus()
 
         // Android does not display runtime permissions during APK installation.
         // We request CAMERA immediately on the first launch before starting AR.
@@ -286,7 +340,7 @@ class MainActivity : AppCompatActivity() {
         arSceneView.onSessionUpdated = { _, frame ->
             latestFrame = frame
 
-            if (autoFloorOutline && (measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA)) {
+            if (autoFloorOutline && (measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA)) {
                 updateFloorBoundary(frame)
             } else if (measureMode == MeasureMode.KITCHEN_TOP && kitchenTopPlane != null) {
                 updateKitchenTopBoundary(frame, kitchenTopPlane!!)
@@ -298,12 +352,12 @@ class MainActivity : AppCompatActivity() {
                 maybeSegmentPerson(frame)
             }
 
-            if (firstAnchor == null && measureMode != MeasureMode.AREA) {
+            if (firstAnchor == null && measureMode != MeasureMode.AREA && measureMode != MeasureMode.CUSTOM_AREA) {
                 statusText.text = when (measureMode) {
                     MeasureMode.HEIGHT -> "Height mode • Stand clearly in view."
                     else -> measureMode.label + " mode • Tap the first point."
                 }
-            } else if (secondAnchor == null && measureMode != MeasureMode.AREA) {
+            } else if (secondAnchor == null && measureMode != MeasureMode.AREA && measureMode != MeasureMode.CUSTOM_AREA) {
                 statusText.text = if (measureMode == MeasureMode.HEIGHT) {
                     "Point A = feet • Aim at the top of the head and tap."
                 } else {
@@ -598,7 +652,7 @@ class MainActivity : AppCompatActivity() {
         val points = projectPlanePolygon(frame, plane)
         if (points.size >= 3) measurementOverlay.setAutoFloorOutline(points)
         val now = SystemClock.elapsedRealtime()
-        if ((measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA) &&
+        if ((measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA) &&
             now - lastAutoAreaUpdateMs > 500L) {
             lastAutoAreaUpdateMs = now
             updateAutoPlaneMeasurement(plane)
@@ -632,6 +686,8 @@ class MainActivity : AppCompatActivity() {
         area = abs(area) / 2f
         val length = maxX - minX
         val width = maxZ - minZ
+        lastAutoAreaM2 = area
+        lastAutoPolygonWorld = planeWorldPoints(plane)
         if (area > 0.01f) {
             distanceText.text = String.format(
                 Locale.US,
@@ -777,6 +833,8 @@ class MainActivity : AppCompatActivity() {
         area = abs(area) / 2f
         val width = maxX - minX
         val depth = maxZ - minZ
+        lastAutoAreaM2 = area
+        lastAutoPolygonWorld = planeWorldPoints(plane)
         distanceText.text = String.format(
             Locale.US,
             "%.2f m²\n%.1f ft²\n%.1f × %.1f ft",
@@ -799,6 +857,26 @@ class MainActivity : AppCompatActivity() {
         } else {
             measurementOverlay.clearAutoFloorOutline()
         }
+    }
+
+    private fun planeWorldPoints(plane: Plane): List<LocalPoint> {
+        val polygon = plane.polygon
+        if (!polygon.hasRemaining()) return emptyList()
+        polygon.rewind()
+        val local = FloatArray(polygon.remaining())
+        polygon.get(local)
+        val model = FloatArray(16)
+        plane.centerPose.toMatrix(model, 0)
+        val result = mutableListOf<LocalPoint>()
+        for (i in local.indices step 2) {
+            val world = FloatArray(4)
+            android.opengl.Matrix.multiplyMV(
+                world, 0, model, 0,
+                floatArrayOf(local[i], 0f, local[i + 1], 1f), 0
+            )
+            result.add(LocalPoint(world[0], world[1], world[2]))
+        }
+        return result
     }
 
     private fun projectPlanePolygon(frame: Frame, plane: Plane): List<Pair<Float, Float>> {
@@ -946,10 +1024,218 @@ class MainActivity : AppCompatActivity() {
         personMeasured = false
         kitchenTopPlane = null
         lastAutoAreaUpdateMs = 0L
+        lastAutoPolygonWorld = emptyList()
+        lastAutoAreaM2 = 0f
         measurementOverlay.clear()
         findViewById<Button>(R.id.finishAreaButton)?.visibility = View.GONE
         distanceText.text = "—"
         if (::statusText.isInitialized) statusText.text = measureMode.label + " mode • Tap the first point."
+    }
+
+    private fun currentProject(): LocalProject? =
+        projects.firstOrNull { it.id == currentProjectId }
+
+    private fun updateProjectStatus() {
+        val project = currentProject()
+        if (::statusText.isInitialized) {
+            statusText.text = if (project != null) {
+                "${measureMode.label} mode • Project: ${project.name}"
+            } else {
+                "${measureMode.label} mode • No project selected"
+            }
+        }
+    }
+
+    private fun showProjects() {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(8, 4, 8, 4)
+        }
+
+        val current = TextView(this).apply {
+            text = currentProject()?.let { "Current project: ${it.name}" } ?: "No project selected"
+            textSize = 16f
+            setPadding(8, 8, 8, 12)
+        }
+        box.addView(current)
+
+        projects.forEach { project ->
+            val button = Button(this).apply {
+                text = "${project.name}  •  ${project.measurements.size} measurements  •  ${project.photos.size} photos"
+                isAllCaps = false
+                setOnClickListener {
+                    currentProjectId = project.id
+                    getSharedPreferences("local_projects_ui", MODE_PRIVATE).edit().putString("current_project_id", project.id).apply()
+                    updateProjectStatus()
+                    Toast.makeText(this@MainActivity, "Project selected: ${project.name}", Toast.LENGTH_SHORT).show()
+                }
+            }
+            box.addView(button)
+        }
+
+        val newButton = Button(this).apply {
+            text = "＋ NEW PROJECT"
+            setOnClickListener { showCreateProjectDialog() }
+        }
+        val photoButton = Button(this).apply {
+            text = "＋ ADD SITE PHOTO"
+            setOnClickListener {
+                if (currentProject() == null) Toast.makeText(this@MainActivity, "Select a project first.", Toast.LENGTH_SHORT).show()
+                else photoPickerLauncher.launch(arrayOf("image/*"))
+            }
+        }
+        val locationButton = Button(this).apply {
+            text = "📍 SAVE CURRENT LOCATION"
+            setOnClickListener { saveCurrentProjectLocation() }
+        }
+        val exportButton = Button(this).apply {
+            text = "EXPORT DXF"
+            setOnClickListener { exportCurrentProjectDxf() }
+        }
+        box.addView(newButton)
+        box.addView(photoButton)
+        box.addView(locationButton)
+        box.addView(exportButton)
+
+        AlertDialog.Builder(this)
+            .setTitle("Local Projects")
+            .setView(box)
+            .setPositiveButton("DONE", null)
+            .show()
+    }
+
+    private fun showCreateProjectDialog() {
+        val input = EditText(this).apply {
+            hint = "Project name"
+            setSingleLine(true)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("New Project")
+            .setView(input)
+            .setNegativeButton("CANCEL", null)
+            .setPositiveButton("CREATE") { _, _ ->
+                val project = localStore.addProject(projects, input.text.toString())
+                currentProjectId = project.id
+                getSharedPreferences("local_projects_ui", MODE_PRIVATE).edit().putString("current_project_id", project.id).apply()
+                updateProjectStatus()
+                Toast.makeText(this, "Project created: ${project.name}", Toast.LENGTH_SHORT).show()
+                saveCurrentProjectLocation()
+            }
+            .show()
+    }
+
+    private fun saveCurrentProjectLocation() {
+        val project = currentProject() ?: run {
+            Toast.makeText(this, "Create/select a project first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val fine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val coarse = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (!fine && !coarse) {
+            locationPermissionLauncher.launch(arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ))
+            return
+        }
+        try {
+            val manager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            val location = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+                .asSequence()
+                .mapNotNull { provider -> try { manager.getLastKnownLocation(provider) } catch (_: SecurityException) { null } }
+                .maxByOrNull { it.time }
+            if (location != null) {
+                localStore.setLocation(project, location.latitude, location.longitude, projects)
+                Toast.makeText(this, "Location saved to ${project.name}.", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, "No recent location available. Turn on Location and try again.", Toast.LENGTH_LONG).show()
+            }
+        } catch (e: Exception) {
+            Toast.makeText(this, "Could not save location: " + e.message, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun saveCurrentMeasurement() {
+        val project = currentProject() ?: run {
+            showProjects()
+            Toast.makeText(this, "Create/select a project, then save the measurement.", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val points = mutableListOf<LocalPoint>()
+        var area: Float? = null
+        when {
+            measureMode == MeasureMode.CUSTOM_AREA && areaAnchors.size >= 3 -> {
+                points.addAll(areaAnchors.map { p -> LocalPoint(p.pose.tx(), p.pose.ty(), p.pose.tz()) })
+                area = polygonArea(points)
+            }
+            (measureMode == MeasureMode.AREA || measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.KITCHEN_TOP) &&
+                lastAutoPolygonWorld.size >= 3 -> {
+                points.addAll(lastAutoPolygonWorld)
+                area = lastAutoAreaM2.takeIf { it > 0f } ?: polygonArea(points)
+            }
+            firstAnchor != null && secondAnchor != null -> {
+                val a = firstAnchor!!.pose
+                val b = secondAnchor!!.pose
+                points.add(LocalPoint(a.tx(), a.ty(), a.tz()))
+                points.add(LocalPoint(b.tx(), b.ty(), b.tz()))
+            }
+            else -> {
+                Toast.makeText(this, "Complete a measurement first.", Toast.LENGTH_SHORT).show()
+                return
+            }
+        }
+
+        val defaultTitle = "${measureMode.label} ${project.measurements.size + 1}"
+        val input = EditText(this).apply {
+            setText(defaultTitle)
+            setSelectAllOnFocus(true)
+            setSingleLine(true)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Save Measurement")
+            .setMessage("Saved locally on this phone.")
+            .setView(input)
+            .setNegativeButton("CANCEL", null)
+            .setPositiveButton("SAVE") { _, _ ->
+                localStore.addMeasurement(
+                    project,
+                    LocalMeasurement(
+                        title = input.text.toString().ifBlank { defaultTitle },
+                        mode = measureMode.label,
+                        summary = distanceText.text?.toString() ?: "",
+                        points = points,
+                        areaM2 = area
+                    ),
+                    projects
+                )
+                Toast.makeText(this, "Measurement saved locally.", Toast.LENGTH_SHORT).show()
+                updateProjectStatus()
+            }
+            .show()
+    }
+
+    private fun polygonArea(points: List<LocalPoint>): Float {
+        if (points.size < 3) return 0f
+        var area = 0f
+        for (i in points.indices) {
+            val j = (i + 1) % points.size
+            area += points[i].x * points[j].z - points[j].x * points[i].z
+        }
+        return abs(area) / 2f
+    }
+
+    private fun exportCurrentProjectDxf() {
+        val project = currentProject() ?: run {
+            Toast.makeText(this, "Create/select a project first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (project.measurements.isEmpty()) {
+            Toast.makeText(this, "Save at least one measurement first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        pendingDxf = DxfExporter.export(project)
+        dxfCreatorLauncher.launch(project.name.replace(Regex("[^A-Za-z0-9_-]"), "_") + ".dxf")
     }
 
     private fun hasCameraPermission(): Boolean =
