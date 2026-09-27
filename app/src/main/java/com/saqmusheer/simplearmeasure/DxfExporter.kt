@@ -6,8 +6,8 @@ object DxfExporter {
     fun export(project: LocalProject): String {
         val sb = StringBuilder()
         sb.append("0\nSECTION\n2\nHEADER\n")
-        sb.append("9\n$ACADVER\n1\nAC1009\n")
-        sb.append("9\n$INSUNITS\n70\n4\n")
+        sb.append("9\n\$ACADVER\n1\nAC1009\n")
+        sb.append("9\n\$INSUNITS\n70\n4\n")
         sb.append("0\nENDSEC\n0\nSECTION\n2\nENTITIES\n")
         project.measurements.forEachIndexed { index, measurement ->
             val layer = layerFor(measurement.mode)
