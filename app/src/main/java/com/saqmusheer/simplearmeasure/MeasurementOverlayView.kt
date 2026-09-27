@@ -49,6 +49,11 @@ class MeasurementOverlayView @JvmOverloads constructor(
     private var showHeightGuide = false
     private val areaPoints = mutableListOf<Pair<Float,Float>>()
     private var areaClosed = false
+    private val areaPoints = mutableListOf<Pair<Float,Float>>()
+    private var areaClosed = false
+
+    fun addAreaPoint(x:Float,y:Float){ areaPoints.add(x to y); areaClosed=false; invalidate() }
+    fun closeArea(){ areaClosed=true; invalidate() }
 
     fun addAreaPoint(x:Float,y:Float){ areaPoints.add(x to y); areaClosed=false; invalidate() }
     fun closeArea(){ areaClosed=true; invalidate() }
