@@ -379,21 +379,33 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyPersonMask(mask: FloatBuffer?, imageWidth: Int, imageHeight: Int, frame: Frame) {
         if (mask == null || !mask.hasRemaining()) return
+
         val confidence = FloatArray(mask.remaining())
         mask.rewind()
         mask.get(confidence)
 
-        val maskAspect = imageWidth.toFloat() / imageHeight.toFloat()
+        // ML Kit can return a mask at a different resolution than the camera image.
+        // Map the mask back to IMAGE_PIXELS instead of assuming identical dimensions.
+        val aspect = imageWidth.toFloat() / imageHeight.toFloat()
         var maskWidth = imageWidth
         var maskHeight = imageHeight
         if (confidence.size != imageWidth * imageHeight) {
-            maskWidth = max(1, sqrt(confidence.size.toFloat() * maskAspect).toInt())
+            maskWidth = max(1, sqrt(confidence.size.toFloat() * aspect).toInt())
             maskHeight = max(1, confidence.size / maskWidth)
-            if (maskWidth * maskHeight > confidence.size) {
-                maskHeight = max(1, confidence.size / maskWidth)
+            if (maskWidth * maskHeight != confidence.size) {
+                maskHeight = max(1, sqrt(confidence.size.toFloat() / aspect).toInt())
+                maskWidth = max(1, confidence.size / maskHeight)
             }
         }
-        val stepY = max(2, maskHeight / 160)
+        if (maskWidth * maskHeight > confidence.size) {
+            maskHeight = max(1, confidence.size / maskWidth)
+        }
+        if (maskWidth * maskHeight < confidence.size) {
+            maskWidth = max(1, confidence.size / maskHeight)
+        }
+
+        val yStep = max(2, maskHeight / 160)
+        val xStep = max(2, maskWidth / 220)
         val leftBoundary = ArrayList<Pair<Float, Float>>(160)
         val rightBoundary = ArrayList<Pair<Float, Float>>(160)
         val topSamples = ArrayList<Float>(12)
@@ -402,37 +414,41 @@ class MainActivity : AppCompatActivity() {
         var bottomY = -1f
         var rows = 0
 
-        for (my in 0 until maskHeight step stepY) {
+        for (my in 0 until maskHeight step yStep) {
             var left = maskWidth
             var right = -1
-            for (mx in 0 until maskWidth step max(2, maskWidth / 220)) {
+            for (mx in 0 until maskWidth step xStep) {
                 val index = my * maskWidth + mx
                 if (index < confidence.size && confidence[index] > 0.62f) {
                     left = min(left, mx)
                     right = max(right, mx)
                 }
             }
-            val y = my.toFloat() / max(1, maskHeight - 1) * (imageHeight - 1)
-            if (right >= left && right - left >= max(2, maskWidth / 80)) {
-                val leftX = left.toFloat() / max(1, maskWidth - 1) * (imageWidth - 1)
-                val rightX = right.toFloat() / max(1, maskWidth - 1) * (imageWidth - 1)
-                leftBoundary.add(leftX to y)
-                rightBoundary.add(rightX to y)
-                rows++
-            if (right >= left && right - left >= stepY * 2) {
-                leftBoundary.add(left.toFloat() to y.toFloat())
-                rightBoundary.add(right.toFloat() to y.toFloat())
-                rows++
-                if (y < topY) {
-                    topY = y.toFloat()
-                    topSamples.clear()
-                }
-                if (y == topY || y - topY <= stepY * 2) topSamples.add(((left + right) * 0.5f))
-                if (y > bottomY) {
-                    bottomY = y.toFloat()
-                    bottomSamples.clear()
-                }
-                if (bottomY - y <= stepY * 2) bottomSamples.add(((left + right) * 0.5f))
+
+            if (right < left || right - left < max(2, maskWidth / 80)) continue
+
+            val imageY = my.toFloat() / max(1, maskHeight - 1) * (imageHeight - 1)
+            val leftX = left.toFloat() / max(1, maskWidth - 1) * (imageWidth - 1)
+            val rightX = right.toFloat() / max(1, maskWidth - 1) * (imageWidth - 1)
+
+            leftBoundary.add(leftX to imageY)
+            rightBoundary.add(rightX to imageY)
+            rows++
+
+            if (imageY < topY) {
+                topY = imageY
+                topSamples.clear()
+            }
+            if (imageY - topY <= yStep * imageHeight.toFloat() / max(1, maskHeight - 1) * 2f) {
+                topSamples.add((leftX + rightX) * 0.5f)
+            }
+
+            if (imageY > bottomY) {
+                bottomY = imageY
+                bottomSamples.clear()
+            }
+            if (bottomY - imageY <= yStep * imageHeight.toFloat() / max(1, maskHeight - 1) * 2f) {
+                bottomSamples.add((leftX + rightX) * 0.5f)
             }
         }
 
@@ -440,9 +456,16 @@ class MainActivity : AppCompatActivity() {
 
         val topX = if (topSamples.isNotEmpty()) topSamples.average().toFloat() else imageWidth / 2f
         val bottomX = if (bottomSamples.isNotEmpty()) bottomSamples.average().toFloat() else imageWidth / 2f
+
         val points = ArrayList<Float>((leftBoundary.size + rightBoundary.size) * 2)
-        leftBoundary.forEach { points.add(it.first); points.add(it.second) }
-        rightBoundary.forEach { points.add(it.first); points.add(it.second) }
+        leftBoundary.forEach {
+            points.add(it.first)
+            points.add(it.second)
+        }
+        rightBoundary.forEach {
+            points.add(it.first)
+            points.add(it.second)
+        }
 
         val screenPoints = FloatArray(points.size)
         try {
@@ -466,22 +489,25 @@ class MainActivity : AppCompatActivity() {
         }
         measurementOverlay.setPersonOutline(outline)
 
-        val topScreen = FloatArray(2)
-        val bottomScreen = FloatArray(2)
-        frame.transformCoordinates2d(
-            Coordinates2d.IMAGE_PIXELS,
-            floatArrayOf(topX, topY, bottomX, bottomY),
-            Coordinates2d.VIEW,
-            floatArrayOf(0f, 0f, 0f, 0f).also {
-                topScreen[0] = it[0]
-                topScreen[1] = it[1]
-                bottomScreen[0] = it[2]
-                bottomScreen[1] = it[3]
-            }
-        )
+        val endpoints = FloatArray(4)
+        try {
+            frame.transformCoordinates2d(
+                Coordinates2d.IMAGE_PIXELS,
+                floatArrayOf(topX, topY, bottomX, bottomY),
+                Coordinates2d.VIEW,
+                endpoints
+            )
+        } catch (_: Exception) {
+            return
+        }
 
-        val topHit = findDepthHit(frame, topScreen[0], topScreen[1])
-        val bottomHit = findDepthHit(frame, bottomScreen[0], bottomScreen[1])
+        val topScreenX = endpoints[0]
+        val topScreenY = endpoints[1]
+        val bottomScreenX = endpoints[2]
+        val bottomScreenY = endpoints[3]
+
+        val topHit = findDepthHit(frame, topScreenX, topScreenY)
+        val bottomHit = findDepthHit(frame, bottomScreenX, bottomScreenY)
         if (topHit != null && bottomHit != null) {
             val topPose = topHit.hitPose
             val bottomPose = bottomHit.hitPose
@@ -493,8 +519,8 @@ class MainActivity : AppCompatActivity() {
                 secondAnchor = createAnchorSafely(topHit)
                 if (firstAnchor != null && secondAnchor != null) {
                     personMeasured = true
-                    measurementOverlay.setFirstPoint(bottomScreen[0], bottomScreen[1], false)
-                    measurementOverlay.setSecondPoint(topScreen[0], topScreen[1])
+                    measurementOverlay.setFirstPoint(bottomScreenX, bottomScreenY, false)
+                    measurementOverlay.setSecondPoint(topScreenX, topScreenY)
                     showDistance(height)
                     val wall = if (wallReference) estimateWallDistance(bottomPose, frame) else null
                     statusText.text = if (wall != null) {
