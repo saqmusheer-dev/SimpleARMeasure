@@ -11,8 +11,8 @@ android {
         applicationId = "com.saqmusheer.simplearmeasure"
         minSdk = 24
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.7.5"
+        versionCode = 13
+        versionName = "0.7.6"
     }
 
     buildFeatures {
