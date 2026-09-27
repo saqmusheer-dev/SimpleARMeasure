@@ -16,7 +16,6 @@ import com.google.ar.core.TrackingState
 import io.github.sceneview.ar.ARSceneView
 import io.github.sceneview.ar.arcore.createAnchorOrNull
 import io.github.sceneview.ar.arcore.getUpdatedPlanes
-import io.github.sceneview.math.Position
 import kotlin.math.sqrt
 import java.util.Locale
 
@@ -26,7 +25,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var distanceText: TextView
 
-    private var firstPoint: Position? = null
+    private data class MeasurePoint(val x: Float, val y: Float, val z: Float)
+    private var latestFrame: com.google.ar.core.Frame? = null
+    private var firstPoint: MeasurePoint? = null
     private var firstAnchor: com.google.ar.core.Anchor? = null
     private var secondAnchor: com.google.ar.core.Anchor? = null
     private var planeDetected = false
@@ -76,6 +77,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         arSceneView.onSessionUpdated = { _, frame ->
+            latestFrame = frame
             planeDetected = frame.getUpdatedPlanes().any { plane ->
                 plane.trackingState == TrackingState.TRACKING &&
                     (plane.type == Plane.Type.HORIZONTAL_UPWARD_FACING ||
@@ -104,14 +106,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun measureAt(x: Float, y: Float) {
-        val hit = arSceneView.hitTestAR(
-            xPx = x,
-            yPx = y,
-            planeTypes = setOf(
-                Plane.Type.HORIZONTAL_UPWARD_FACING,
-                Plane.Type.VERTICAL
-            )
-        )
+        val frame = latestFrame ?: run {
+            Toast.makeText(this, "AR is still starting. Try again.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val hit = frame.hitTest(x, y).firstOrNull { result ->
+            val trackable = result.trackable
+            (trackable is Plane) &&
+                trackable.trackingState == TrackingState.TRACKING &&
+                (trackable.type == Plane.Type.HORIZONTAL_UPWARD_FACING ||
+                    trackable.type == Plane.Type.VERTICAL)
+        }
 
         if (hit == null) {
             Toast.makeText(
@@ -122,24 +128,26 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val position = hit.worldPosition
+        val pose = hit.hitPose
+        val position = MeasurePoint(pose.tx(), pose.ty(), pose.tz())
 
         if (firstPoint == null) {
             firstPoint = position
-            firstAnchor = hit.createAnchorOrNull()
+            firstAnchor?.detach()
+            firstAnchor = hit.createAnchor()
             statusText.text = "Point A set. Tap the second point."
             distanceText.text = "A"
             return
         }
 
         secondAnchor?.detach()
-        secondAnchor = hit.createAnchorOrNull()
+        secondAnchor = hit.createAnchor()
 
         val a = firstPoint!!
         val dx = position.x - a.x
         val dy = position.y - a.y
         val dz = position.z - a.z
-        val meters = sqrt(dx * dx + dy * dy + dz * dz)
+        val meters = kotlin.math.sqrt(dx * dx + dy * dy + dz * dz)
 
         showDistance(meters)
     }
