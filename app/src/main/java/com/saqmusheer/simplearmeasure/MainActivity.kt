@@ -207,6 +207,7 @@ class MainActivity : AppCompatActivity() {
             MeasureMode.FLOOR -> sqrt(dx * dx + dz * dz)
             MeasureMode.HEIGHT -> abs(dy)
             MeasureMode.DIRECT -> sqrt(dx * dx + dy * dy + dz * dz)
+            MeasureMode.AREA -> 0f
         }
 
         measurementOverlay.setSecondPoint(x, y)
