@@ -671,27 +671,39 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun findBestHit(frame: Frame, x: Float, y: Float): HitResult? {
-        val directHits = frame.hitTest(x, y).filter { it.trackable?.trackingState == TrackingState.TRACKING }
-        val hits = if (measureMode == MeasureMode.HEIGHT && directHits.none { it.trackable is DepthPoint }) {
-            val offsets = floatArrayOf(-28f, -14f, 14f, 28f)
-            offsets.flatMap { ox -> offsets.map { oy -> frame.hitTest(x + ox, y + oy) } }
-                .flatten().filter { it.trackable?.trackingState == TrackingState.TRACKING }
-        } else directHits
+        val offsets = floatArrayOf(0f, -24f, 24f, -48f, 48f)
+        val hits = offsets.flatMap { ox ->
+            offsets.map { oy -> frame.hitTest(x + ox, y + oy) }
+        }.flatten().filter {
+            it.trackable?.trackingState == TrackingState.TRACKING
+        }
 
         if (hits.isEmpty()) return null
-        fun horizontal(hit: HitResult) = (hit.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING
-        fun vertical(hit: HitResult) = (hit.trackable as? Plane)?.type == Plane.Type.VERTICAL
+
+        fun horizontal(hit: HitResult) =
+            (hit.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING
+
+        fun vertical(hit: HitResult) =
+            (hit.trackable as? Plane)?.type == Plane.Type.VERTICAL
 
         return when (measureMode) {
             MeasureMode.FLOOR ->
-                hits.firstOrNull { horizontal(it) } ?: hits.firstOrNull { it.trackable is DepthPoint }
-                    ?: hits.firstOrNull { vertical(it) } ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
-            MeasureMode.HEIGHT ->
-                hits.firstOrNull { it.trackable is DepthPoint } ?: hits.firstOrNull { vertical(it) }
-                    ?: hits.firstOrNull { horizontal(it) } ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
-            MeasureMode.DIRECT ->
-                hits.firstOrNull { it.trackable is DepthPoint } ?: hits.firstOrNull { it.trackable is Plane }
+                hits.firstOrNull { horizontal(it) }
+                    ?: hits.firstOrNull { it.trackable is DepthPoint }
                     ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
+                    ?: hits.firstOrNull { vertical(it) }
+
+            MeasureMode.HEIGHT ->
+                hits.firstOrNull { it.trackable is DepthPoint }
+                    ?: hits.firstOrNull { vertical(it) }
+                    ?: hits.firstOrNull { horizontal(it) }
+                    ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
+
+            MeasureMode.DIRECT ->
+                hits.firstOrNull { it.trackable is DepthPoint }
+                    ?: hits.firstOrNull { it.trackable is Plane }
+                    ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
+
             MeasureMode.AREA -> null
         }
     }
