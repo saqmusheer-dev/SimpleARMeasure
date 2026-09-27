@@ -657,13 +657,7 @@ class MainActivity : AppCompatActivity() {
                     it.subsumedBy == null &&
                     it.type == Plane.Type.HORIZONTAL_UPWARD_FACING
             }
-        val plane = targetPlane ?: session.getAllTrackables(Plane::class.java)
-            .filter {
-                it.trackingState == TrackingState.TRACKING &&
-                    it.subsumedBy == null &&
-                    it.type == Plane.Type.HORIZONTAL_UPWARD_FACING
-            }
-            .maxByOrNull { it.extentX * it.extentZ }
+        val plane = targetPlane
         if (plane == null) {
             measurementOverlay.clearAutoFloorOutline()
             return
@@ -1023,6 +1017,33 @@ class MainActivity : AppCompatActivity() {
             depth * 3.28084f
         )
         statusText.text = "Kitchen top detected • Shape and area updated."
+    }
+
+    private fun updateVerticalBoundary(frame: Frame) {
+        val session = arSession ?: run {
+            measurementOverlay.clearAutoFloorOutline()
+            return
+        }
+        val cx = measurementOverlay.width / 2f
+        val cy = measurementOverlay.height / 2f
+        val plane = frame.hitTest(cx, cy).asSequence()
+            .mapNotNull { it.trackable as? Plane }
+            .firstOrNull {
+                it.trackingState == TrackingState.TRACKING &&
+                    it.subsumedBy == null &&
+                    it.type == Plane.Type.VERTICAL
+            }
+        if (plane == null) {
+            measurementOverlay.clearAutoFloorOutline()
+            return
+        }
+        val points = projectPlanePolygon(frame, plane)
+        if (points.size >= 3) {
+            measurementOverlay.setAutoFloorOutline(points)
+            statusText.text = "Wall detected • Green outline follows the tracked wall."
+        } else {
+            measurementOverlay.clearAutoFloorOutline()
+        }
     }
 
     private fun updateKitchenTopBoundary(frame: Frame, plane: Plane) {
