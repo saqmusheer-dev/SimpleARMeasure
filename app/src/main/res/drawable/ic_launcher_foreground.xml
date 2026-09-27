@@ -5,23 +5,33 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
+    <!-- AR measurement frame -->
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M28,40 C28,36 31,33 35,33 L42,33 L46,28 L62,28 L66,33 L73,33 C77,33 80,36 80,40 L80,69 C80,73 77,76 73,76 L35,76 C31,76 28,73 28,69 Z" />
-
-    <path
-        android:fillColor="#4F46E5"
-        android:pathData="M54,43 A11,11 0,1 0,54,65 A11,11 0,1 0,54,43 Z" />
-
+        android:pathData="M28,27 L38,27 L38,34 L34,34 L34,74 L38,74 L38,81 L28,81 Z" />
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M54,48 A6,6 0,1 0,54,60 A6,6 0,1 0,54,48 Z" />
+        android:pathData="M80,27 L70,27 L70,34 L74,34 L74,74 L70,74 L70,81 L80,81 Z" />
+
+    <!-- Measurement ruler -->
+    <path
+        android:fillColor="#F4B400"
+        android:pathData="M43,25 L65,25 L65,83 L43,83 Z" />
 
     <path
-        android:fillColor="#F59E0B"
-        android:pathData="M64,62 L71,55 L84,68 L77,75 Z" />
+        android:fillColor="#24133F"
+        android:pathData="M48,31 L51,31 L51,37 L48,37 Z
+            M57,31 L60,31 L60,40 L57,40 Z
+            M48,43 L51,43 L51,49 L48,49 Z
+            M57,45 L60,45 L60,54 L57,54 Z
+            M48,55 L51,55 L51,61 L48,61 Z
+            M57,59 L60,59 L60,68 L57,68 Z
+            M48,67 L51,67 L51,73 L48,73 Z
+            M57,73 L60,73 L60,80 L57,80 Z" />
 
+    <!-- Center crosshair / AR target -->
     <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M70,59 L72,57 L74,59 L72,61 Z M74,63 L76,61 L78,63 L76,65 Z M78,67 L80,65 L82,67 L80,69 Z M82,71 L84,69 L86,71 L84,73 Z" />
+        android:fillColor="#39FF88"
+        android:pathData="M49,52 L59,52 L59,56 L49,56 Z
+            M52,49 L56,49 L56,59 L52,59 Z" />
 </vector>
