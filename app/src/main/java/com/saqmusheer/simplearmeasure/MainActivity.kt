@@ -145,6 +145,7 @@ class MainActivity : AppCompatActivity() {
         floor.alpha = if (mode == MeasureMode.FLOOR) 1f else 0.60f
         height.alpha = if (mode == MeasureMode.HEIGHT) 1f else 0.60f
         direct.alpha = if (mode == MeasureMode.DIRECT) 1f else 0.60f
+        findViewById<Button>(R.id.areaButton).alpha = if (mode == MeasureMode.AREA) 1f else 0.60f
 
         resetMeasurement()
     }
@@ -152,7 +153,7 @@ class MainActivity : AppCompatActivity() {
     private fun measureAt(x: Float, y: Float) {
         if (measureMode == MeasureMode.AREA) { measureAreaAt(x, y); return }
 
-        if (measureMode == MeasureMode.AREA) { measureAreaAt(x,y); return }
+        if (measureMode == MeasureMode.AREA) { measureAreaAt(x, y); return }
         val frame = latestFrame ?: run {
             Toast.makeText(this, "AR is still starting. Try again.", Toast.LENGTH_SHORT).show()
             return
@@ -286,6 +287,8 @@ class MainActivity : AppCompatActivity() {
                 hits.firstOrNull { it.trackable is DepthPoint }
                     ?: hits.firstOrNull { it.trackable is Plane }
                     ?: hits.firstOrNull { it.trackable is Point }
+
+            MeasureMode.AREA -> null
         }
     }
 
