@@ -7,7 +7,7 @@ import androidx.appcompat.app.AppCompatActivity
 import com.google.ar.core.HitResult
 import com.google.ar.sceneform.AnchorNode
 import com.google.ar.sceneform.math.Vector3
-import com.gorisse.thomas.sceneform.ux.ArFragment
+import com.google.ar.sceneform.ux.ArFragment
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
