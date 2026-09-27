@@ -10,6 +10,13 @@
         android:layout_height="match_parent"
         android:keepScreenOn="true" />
 
+    <com.saqmusheer.simplearmeasure.MeasurementOverlayView
+        android:id="@+id/measurementOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clickable="false"
+        android:focusable="false" />
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
