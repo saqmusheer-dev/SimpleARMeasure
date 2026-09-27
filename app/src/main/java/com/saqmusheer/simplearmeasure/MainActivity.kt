@@ -72,6 +72,7 @@ class MainActivity : AppCompatActivity() {
     private var pendingDxf: String? = null
     private var lastAutoPolygonWorld = emptyList<LocalPoint>()
     private var lastAutoAreaM2 = 0f
+    private var lastAutoAreaUpdateMs = 0L
 
     private var latestFrame: Frame? = null
     private var arSession: Session? = null
