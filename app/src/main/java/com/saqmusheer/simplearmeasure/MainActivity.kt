@@ -123,6 +123,13 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.resetButton).setOnClickListener { resetMeasurement() }
         findViewById<Button>(R.id.settingsButton).setOnClickListener { showSettings() }
 
+        measurementOverlay.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_UP) {
+                measureAt(event.x, event.y)
+            }
+            true
+        }
+
         findViewById<View>(R.id.rulerView).visibility = if (showRuler) View.VISIBLE else View.GONE
         selectMode(MeasureMode.FLOOR)
 
@@ -227,6 +234,7 @@ class MainActivity : AppCompatActivity() {
 
         arSceneView.configureSession { session, config ->
             arSession = session
+            arSceneView.planeRenderer.isVisible = false
             config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
             config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
             config.depthMode =
@@ -274,12 +282,6 @@ class MainActivity : AppCompatActivity() {
             statusText.text = "AR failed: " + (exception.message ?: "Unknown error")
         }
 
-        arSceneView.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_UP) {
-                measureAt(event.x, event.y)
-            }
-            true
-        }
     }
 
     private fun maybeSegmentPerson(frame: Frame) {
