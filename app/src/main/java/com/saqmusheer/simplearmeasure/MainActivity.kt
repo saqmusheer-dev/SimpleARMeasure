@@ -119,8 +119,11 @@ class MainActivity : AppCompatActivity() {
         }
 
     private val locationPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-            saveCurrentProjectLocation()
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+            val granted = result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+            if (granted) saveCurrentProjectLocation()
+            else Toast.makeText(this, "Location permission was not granted.", Toast.LENGTH_SHORT).show()
         }
 
     private val dxfCreatorLauncher =
