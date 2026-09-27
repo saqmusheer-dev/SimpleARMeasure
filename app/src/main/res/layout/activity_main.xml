@@ -241,11 +241,12 @@
 
             <Button
                 android:id="@+id/resetButton"
-            android:layout_width="120dp"
-            android:layout_height="46dp"
-            android:layout_marginTop="10dp"
-            android:text="RESET"
-            android:textStyle="bold" />
+                android:layout_width="120dp"
+                android:layout_height="46dp"
+                android:layout_marginTop="10dp"
+                android:text="RESET"
+                android:textStyle="bold" />
+        </LinearLayout>
     </LinearLayout>
 
 </FrameLayout>
