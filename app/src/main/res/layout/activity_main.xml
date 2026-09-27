@@ -3,11 +3,11 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <fragment
-        android:id="@+id/ar_fragment"
-        android:name="com.gorisse.thomas.sceneform.ux.ArFragment"
+    <io.github.sceneview.ar.ARSceneView
+        android:id="@+id/arSceneView"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent"
+        android:keepScreenOn="true" />
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -30,7 +30,9 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
-            android:text="Move your phone slowly to detect a surface."
+            android:background="#AA000000"
+            android:padding="10dp"
+            android:text="Starting camera…"
             android:textColor="@android:color/white"
             android:textSize="16sp" />
     </LinearLayout>
@@ -48,6 +50,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:background="#CC000000"
+            android:gravity="center"
             android:paddingStart="20dp"
             android:paddingEnd="20dp"
             android:paddingTop="10dp"
