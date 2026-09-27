@@ -487,7 +487,21 @@ class MainActivity : AppCompatActivity() {
             measurementOverlay.clearAutoFloorOutline()
             return
         }
-        val plane = session.getAllTrackables(Plane::class.java)
+
+        val centerX = measurementOverlay.width / 2f
+        val centerY = measurementOverlay.height / 2f
+
+        // Prefer the horizontal surface currently under the camera centre.
+        val targetPlane = frame.hitTest(centerX, centerY)
+            .asSequence()
+            .mapNotNull { it.trackable as? Plane }
+            .firstOrNull {
+                it.trackingState == TrackingState.TRACKING &&
+                    it.subsumedBy == null &&
+                    it.type == Plane.Type.HORIZONTAL_UPWARD_FACING
+            }
+
+        val plane = targetPlane ?: session.getAllTrackables(Plane::class.java)
             .filter {
                 it.trackingState == TrackingState.TRACKING &&
                     it.subsumedBy == null &&
@@ -503,6 +517,7 @@ class MainActivity : AppCompatActivity() {
         val polygon = plane.polygon
         if (!polygon.hasRemaining()) return
         val local = FloatArray(polygon.remaining())
+        polygon.rewind()
         polygon.get(local)
 
         val view = FloatArray(16)
@@ -516,12 +531,13 @@ class MainActivity : AppCompatActivity() {
 
         val points = ArrayList<Pair<Float, Float>>(local.size / 2)
         for (i in local.indices step 2) {
-            val world = floatArrayOf(local[i], 0f, local[i + 1], 1f)
-            val modelWorld = FloatArray(4)
-            android.opengl.Matrix.multiplyMV(modelWorld, 0, model, 0, world, 0)
+            val modelPoint = floatArrayOf(local[i], 0f, local[i + 1], 1f)
+            val worldPoint = FloatArray(4)
+            android.opengl.Matrix.multiplyMV(worldPoint, 0, model, 0, modelPoint, 0)
             val clip = FloatArray(4)
-            android.opengl.Matrix.multiplyMV(clip, 0, pv, 0, modelWorld, 0)
+            android.opengl.Matrix.multiplyMV(clip, 0, pv, 0, worldPoint, 0)
             if (clip[3] <= 0f) continue
+
             val nx = clip[0] / clip[3]
             val ny = clip[1] / clip[3]
             points.add(
@@ -529,6 +545,7 @@ class MainActivity : AppCompatActivity() {
                     ((1f - ny) * 0.5f * measurementOverlay.height)
             )
         }
+
         if (points.size >= 3) measurementOverlay.setAutoFloorOutline(points)
     }
 
