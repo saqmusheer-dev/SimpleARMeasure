@@ -28,7 +28,8 @@ class MainActivity : AppCompatActivity() {
     private enum class MeasureMode(val label: String) {
         FLOOR("Floor"),
         HEIGHT("Height"),
-        DIRECT("3D")
+        DIRECT("3D"),
+        AREA("Area")
     }
 
     private lateinit var arSceneView: ARSceneView
@@ -93,7 +94,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(root)
     }
 
-    private fun startAr()
+    private fun startAr() {
         statusText.text = "Floor mode • Tap the first point."
         arSceneView.lifecycle = lifecycle
 
@@ -149,6 +150,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun measureAt(x: Float, y: Float) {
+        if (measureMode == MeasureMode.AREA) { measureAreaAt(x, y); return }
+
         if (measureMode == MeasureMode.AREA) { measureAreaAt(x,y); return }
         val frame = latestFrame ?: run {
             Toast.makeText(this, "AR is still starting. Try again.", Toast.LENGTH_SHORT).show()
@@ -207,6 +210,23 @@ class MainActivity : AppCompatActivity() {
 
         measurementOverlay.setSecondPoint(x, y)
         showDistance(meters)
+    }
+
+    private fun measureAreaAt(x: Float, y: Float) {
+        val frame = latestFrame ?: return
+        val hit = frame.hitTest(x,y).firstOrNull { it.trackable?.trackingState == TrackingState.TRACKING && ((it.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING || it.trackable is DepthPoint || it.trackable is Point) } ?: run { Toast.makeText(this,"Aim at a kitchen/floor corner and tap.",Toast.LENGTH_SHORT).show(); return }
+        createAnchorSafely(hit)?.let { areaAnchors.add(it); measurementOverlay.addAreaPoint(x,y); distanceText.text = areaAnchors.size.toString()+" points"; findViewById<Button>(R.id.finishAreaButton).visibility = if(areaAnchors.size>=3) android.view.View.VISIBLE else android.view.View.GONE; statusText.text = "Area outline • tap the next corner or Finish." }
+    }
+
+    private fun finishArea() {
+        if (areaAnchors.size < 3) return
+        val p = areaAnchors.map { it.pose }
+        var area = 0f
+        for (i in p.indices) { val j=(i+1)%p.size; area += p[i].tx()*p[j].tz()-p[j].tx()*p[i].tz() }
+        area = abs(area)/2f
+        measurementOverlay.closeArea()
+        distanceText.text = String.format(Locale.US,"%.2f m²\\n%.1f ft²",area,area*10.7639104f)
+        statusText.text = "Area measured • Tap Reset for a new outline."
     }
 
     private fun measureAreaAt(x: Float, y: Float) {
