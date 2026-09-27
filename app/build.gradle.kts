@@ -5,18 +5,26 @@ plugins {
 
 android {
     namespace = "com.saqmusheer.simplearmeasure"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.saqmusheer.simplearmeasure"
         minSdk = 24
-        targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        targetSdk = 36
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     buildFeatures {
         viewBinding = true
+    }
+
+    // Keep native AR libraries compressed so older 4 KB ELF binaries
+    // can be extracted and run under Android 16 page-size compatibility.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 
     compileOptions {
