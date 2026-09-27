@@ -35,6 +35,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var distanceText: TextView
     private lateinit var modeText: TextView
+    private lateinit var measurementOverlay: MeasurementOverlayView
 
     private var latestFrame: Frame? = null
     private var firstAnchor: Anchor? = null
@@ -43,9 +44,8 @@ class MainActivity : AppCompatActivity() {
 
     private val cameraPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) {
-                startAr()
-            } else {
+            if (granted) startAr()
+            else {
                 statusText.text = "Camera permission is required."
                 Toast.makeText(this, "Please allow camera access.", Toast.LENGTH_LONG).show()
             }
@@ -59,31 +59,21 @@ class MainActivity : AppCompatActivity() {
         statusText = findViewById(R.id.statusText)
         distanceText = findViewById(R.id.distanceText)
         modeText = findViewById(R.id.modeText)
+        measurementOverlay = findViewById(R.id.measurementOverlay)
 
-        findViewById<Button>(R.id.floorButton).setOnClickListener {
-            selectMode(MeasureMode.FLOOR)
-        }
-        findViewById<Button>(R.id.heightButton).setOnClickListener {
-            selectMode(MeasureMode.HEIGHT)
-        }
-        findViewById<Button>(R.id.directButton).setOnClickListener {
-            selectMode(MeasureMode.DIRECT)
-        }
-        findViewById<Button>(R.id.resetButton).setOnClickListener {
-            resetMeasurement()
-        }
+        findViewById<Button>(R.id.floorButton).setOnClickListener { selectMode(MeasureMode.FLOOR) }
+        findViewById<Button>(R.id.heightButton).setOnClickListener { selectMode(MeasureMode.HEIGHT) }
+        findViewById<Button>(R.id.directButton).setOnClickListener { selectMode(MeasureMode.DIRECT) }
+        findViewById<Button>(R.id.resetButton).setOnClickListener { resetMeasurement() }
 
         selectMode(MeasureMode.FLOOR)
 
-        if (hasCameraPermission()) {
-            startAr()
-        } else {
-            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-        }
+        if (hasCameraPermission()) startAr()
+        else cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
     }
 
     private fun startAr() {
-        statusText.text = "Tap any point to start."
+        statusText.text = "Floor mode • Tap the first point."
         arSceneView.lifecycle = lifecycle
 
         arSceneView.configureSession { session, config ->
@@ -99,11 +89,14 @@ class MainActivity : AppCompatActivity() {
 
         arSceneView.onSessionUpdated = { _, frame ->
             latestFrame = frame
-
             if (firstAnchor == null) {
                 statusText.text = measureMode.label + " mode • Tap the first point."
             } else if (secondAnchor == null) {
-                statusText.text = "Point A locked • Move to the second point and tap."
+                statusText.text = if (measureMode == MeasureMode.HEIGHT) {
+                    "Point A = feet • Aim at the top of the head and tap."
+                } else {
+                    "Point A locked • Move to the second point and tap."
+                }
             }
         }
 
@@ -127,10 +120,6 @@ class MainActivity : AppCompatActivity() {
         val height = findViewById<Button>(R.id.heightButton)
         val direct = findViewById<Button>(R.id.directButton)
 
-        floor.isSelected = mode == MeasureMode.FLOOR
-        height.isSelected = mode == MeasureMode.HEIGHT
-        direct.isSelected = mode == MeasureMode.DIRECT
-
         floor.alpha = if (mode == MeasureMode.FLOOR) 1f else 0.60f
         height.alpha = if (mode == MeasureMode.HEIGHT) 1f else 0.60f
         direct.alpha = if (mode == MeasureMode.DIRECT) 1f else 0.60f
@@ -148,7 +137,10 @@ class MainActivity : AppCompatActivity() {
         if (hit == null) {
             Toast.makeText(
                 this,
-                "No measurable point here. Aim at the floor, wall or object and try again.",
+                if (measureMode == MeasureMode.HEIGHT)
+                    "Aim at the feet or body and try again."
+                else
+                    "No measurable point here. Aim at the floor, wall or object and try again.",
                 Toast.LENGTH_SHORT
             ).show()
             return
@@ -156,33 +148,30 @@ class MainActivity : AppCompatActivity() {
 
         if (firstAnchor == null) {
             firstAnchor = createAnchorSafely(hit)
-
             if (firstAnchor == null) {
                 Toast.makeText(this, "Could not lock this point. Try again.", Toast.LENGTH_SHORT).show()
                 return
             }
 
+            measurementOverlay.setFirstPoint(x, y, measureMode == MeasureMode.HEIGHT)
             distanceText.text = "A"
-            statusText.text = "Point A locked • Move to the second point and tap."
+            statusText.text = if (measureMode == MeasureMode.HEIGHT) {
+                "Point A = feet • Aim at the top of the head and tap."
+            } else {
+                "Point A locked • Move to the second point and tap."
+            }
             return
         }
 
         secondAnchor?.detach()
         secondAnchor = createAnchorSafely(hit)
-
         if (secondAnchor == null) {
             Toast.makeText(this, "Could not lock the second point. Try again.", Toast.LENGTH_SHORT).show()
             return
         }
 
-        val a = firstAnchor?.pose ?: run {
-            resetMeasurement()
-            return
-        }
-        val b = secondAnchor?.pose ?: run {
-            resetMeasurement()
-            return
-        }
+        val a = firstAnchor?.pose ?: run { resetMeasurement(); return }
+        val b = secondAnchor?.pose ?: run { resetMeasurement(); return }
 
         val dx = b.tx() - a.tx()
         val dy = b.ty() - a.ty()
@@ -194,32 +183,44 @@ class MainActivity : AppCompatActivity() {
             MeasureMode.DIRECT -> sqrt(dx * dx + dy * dy + dz * dz)
         }
 
+        measurementOverlay.setSecondPoint(x, y)
         showDistance(meters)
     }
 
     private fun findBestHit(frame: Frame, x: Float, y: Float): HitResult? {
-        val hits = frame.hitTest(x, y)
+        val directHits = frame.hitTest(x, y)
             .filter { it.trackable?.trackingState == TrackingState.TRACKING }
+
+        val hits = if (measureMode == MeasureMode.HEIGHT && directHits.none { it.trackable is DepthPoint }) {
+            val offsets = floatArrayOf(-28f, -14f, 14f, 28f)
+            offsets.flatMap { ox ->
+                offsets.map { oy ->
+                    frame.hitTest(x + ox, y + oy)
+                }
+            }.flatten().filter { it.trackable?.trackingState == TrackingState.TRACKING }
+        } else {
+            directHits
+        }
 
         if (hits.isEmpty()) return null
 
-        fun isHorizontalPlane(hit: HitResult): Boolean =
+        fun horizontal(hit: HitResult) =
             (hit.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING
 
-        fun isVerticalPlane(hit: HitResult): Boolean =
+        fun vertical(hit: HitResult) =
             (hit.trackable as? Plane)?.type == Plane.Type.VERTICAL
 
         return when (measureMode) {
             MeasureMode.FLOOR ->
-                hits.firstOrNull { isHorizontalPlane(it) }
-                    ?: hits.firstOrNull { isVerticalPlane(it) }
+                hits.firstOrNull { horizontal(it) }
                     ?: hits.firstOrNull { it.trackable is DepthPoint }
+                    ?: hits.firstOrNull { vertical(it) }
                     ?: hits.firstOrNull { it.trackable is Point }
 
             MeasureMode.HEIGHT ->
                 hits.firstOrNull { it.trackable is DepthPoint }
-                    ?: hits.firstOrNull { isVerticalPlane(it) }
-                    ?: hits.firstOrNull { isHorizontalPlane(it) }
+                    ?: hits.firstOrNull { vertical(it) }
+                    ?: hits.firstOrNull { horizontal(it) }
                     ?: hits.firstOrNull { it.trackable is Point }
 
             MeasureMode.DIRECT ->
@@ -230,11 +231,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun createAnchorSafely(hit: HitResult): Anchor? =
-        try {
-            hit.createAnchor()
-        } catch (_: Exception) {
-            null
-        }
+        try { hit.createAnchor() } catch (_: Exception) { null }
 
     private fun showDistance(meters: Float) {
         val centimeters = meters * 100f
@@ -246,10 +243,7 @@ class MainActivity : AppCompatActivity() {
         distanceText.text = String.format(
             Locale.US,
             "%.2f m\n%.1f cm\n%d ft %.1f in",
-            meters,
-            centimeters,
-            feet,
-            inches
+            meters, centimeters, feet, inches
         )
     }
 
@@ -258,6 +252,7 @@ class MainActivity : AppCompatActivity() {
         secondAnchor?.detach()
         firstAnchor = null
         secondAnchor = null
+        measurementOverlay.clear()
         distanceText.text = "—"
 
         if (::statusText.isInitialized) {
@@ -266,10 +261,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun hasCameraPermission(): Boolean =
-        ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.CAMERA
-        ) == PackageManager.PERMISSION_GRANTED
+        ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
 
     override fun onDestroy() {
         firstAnchor?.detach()
