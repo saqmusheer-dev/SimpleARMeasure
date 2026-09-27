@@ -47,6 +47,11 @@ class MeasurementOverlayView @JvmOverloads constructor(
     private var secondY = -1f
     private var heightMode = false
     private var showHeightGuide = false
+    private val areaPoints = mutableListOf<Pair<Float,Float>>()
+    private var areaClosed = false
+
+    fun addAreaPoint(x:Float,y:Float){ areaPoints.add(x to y); areaClosed=false; invalidate() }
+    fun closeArea(){ areaClosed=true; invalidate() }
 
     fun setFirstPoint(x: Float, y: Float, heightMode: Boolean) {
         firstX = x
@@ -71,11 +76,17 @@ class MeasurementOverlayView @JvmOverloads constructor(
         secondX = -1f
         secondY = -1f
         showHeightGuide = false
+        areaPoints.clear(); areaClosed=false
         invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        if(areaPoints.isNotEmpty()){
+            for(i in 0 until areaPoints.lastIndex){ val a=areaPoints[i]; val b=areaPoints[i+1]; canvas.drawLine(a.first,a.second,b.first,b.second,linePaint) }
+            if(areaClosed && areaPoints.size>2){ val a=areaPoints.last(); val b=areaPoints.first(); canvas.drawLine(a.first,a.second,b.first,b.second,linePaint) }
+            areaPoints.forEachIndexed { i,p -> canvas.drawCircle(p.first,p.second,10f,pointPaint); canvas.drawText((i+1).toString(),p.first+13f,p.second-10f,labelPaint) }
+        }
         if (firstX < 0f) return
 
         canvas.drawCircle(firstX, firstY, 12f, pointPaint)
