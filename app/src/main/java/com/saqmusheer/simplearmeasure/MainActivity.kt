@@ -383,7 +383,17 @@ class MainActivity : AppCompatActivity() {
         mask.rewind()
         mask.get(confidence)
 
-        val stepY = max(4, imageHeight / 160)
+        val maskAspect = imageWidth.toFloat() / imageHeight.toFloat()
+        var maskWidth = imageWidth
+        var maskHeight = imageHeight
+        if (confidence.size != imageWidth * imageHeight) {
+            maskWidth = max(1, sqrt(confidence.size.toFloat() * maskAspect).toInt())
+            maskHeight = max(1, confidence.size / maskWidth)
+            if (maskWidth * maskHeight > confidence.size) {
+                maskHeight = max(1, confidence.size / maskWidth)
+            }
+        }
+        val stepY = max(2, maskHeight / 160)
         val leftBoundary = ArrayList<Pair<Float, Float>>(160)
         val rightBoundary = ArrayList<Pair<Float, Float>>(160)
         val topSamples = ArrayList<Float>(12)
@@ -392,16 +402,23 @@ class MainActivity : AppCompatActivity() {
         var bottomY = -1f
         var rows = 0
 
-        for (y in 0 until imageHeight step stepY) {
-            var left = imageWidth
+        for (my in 0 until maskHeight step stepY) {
+            var left = maskWidth
             var right = -1
-            for (x in 0 until imageWidth step stepY) {
-                val index = y * imageWidth + x
+            for (mx in 0 until maskWidth step max(2, maskWidth / 220)) {
+                val index = my * maskWidth + mx
                 if (index < confidence.size && confidence[index] > 0.62f) {
-                    left = min(left, x)
-                    right = max(right, x)
+                    left = min(left, mx)
+                    right = max(right, mx)
                 }
             }
+            val y = my.toFloat() / max(1, maskHeight - 1) * (imageHeight - 1)
+            if (right >= left && right - left >= max(2, maskWidth / 80)) {
+                val leftX = left.toFloat() / max(1, maskWidth - 1) * (imageWidth - 1)
+                val rightX = right.toFloat() / max(1, maskWidth - 1) * (imageWidth - 1)
+                leftBoundary.add(leftX to y)
+                rightBoundary.add(rightX to y)
+                rows++
             if (right >= left && right - left >= stepY * 2) {
                 leftBoundary.add(left.toFloat() to y.toFloat())
                 rightBoundary.add(right.toFloat() to y.toFloat())
