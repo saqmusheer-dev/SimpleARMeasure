@@ -163,6 +163,10 @@ class MainActivity : AppCompatActivity() {
         val input = android.widget.EditText(this).apply {
             hint = "Activation key"
             setSingleLine(true)
+            setTextColor(Color.WHITE)
+            setHintTextColor(0xFFBDB7CC.toInt())
+            setBackgroundColor(0xFF000000.toInt())
+            setPadding(18, 14, 18, 14)
         }
         val activate = Button(this).apply { text = "ACTIVATE" }
         activate.setOnClickListener {
