@@ -625,13 +625,24 @@ class MainActivity : AppCompatActivity() {
 
     private fun measureAreaAt(x: Float, y: Float) {
         val frame = latestFrame ?: return
-        val hit = frame.hitTest(x, y).firstOrNull {
-            it.trackable?.trackingState == TrackingState.TRACKING &&
-                ((it.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING ||
-                    it.trackable is DepthPoint ||
-                    it.trackable is com.google.ar.core.Point)
-        } ?: run {
-            Toast.makeText(this, "Aim at a kitchen/floor corner and tap.", Toast.LENGTH_SHORT).show()
+        val offsets = floatArrayOf(0f, -24f, 24f, -48f, 48f)
+        val hits = offsets.flatMap { ox ->
+            offsets.map { oy -> frame.hitTest(x + ox, y + oy) }
+        }.flatten().filter {
+            it.trackable?.trackingState == TrackingState.TRACKING
+        }
+
+        val hit = hits.firstOrNull {
+            (it.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING
+        } ?: hits.firstOrNull { it.trackable is DepthPoint }
+            ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
+
+        if (hit == null) {
+            Toast.makeText(
+                this,
+                "Move slowly until the surface is detected, then tap the corner.",
+                Toast.LENGTH_SHORT
+            ).show()
             return
         }
 
@@ -641,7 +652,7 @@ class MainActivity : AppCompatActivity() {
             distanceText.text = areaAnchors.size.toString() + " points"
             findViewById<Button>(R.id.finishAreaButton).visibility =
                 if (areaAnchors.size >= 3) View.VISIBLE else View.GONE
-            statusText.text = "Area outline • tap the next corner or Finish."
+            statusText.text = "Point " + areaAnchors.size + " locked • Tap the next corner."
         }
     }
 
