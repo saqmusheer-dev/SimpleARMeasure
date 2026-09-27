@@ -4,45 +4,9 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-
-    <!-- Background -->
-    <path
-        android:fillColor="#4F46E5"
-        android:pathData="M0,0 L108,0 L108,108 L0,108 Z" />
-
-    <!-- Camera body -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M18,38
-            C18,34 21,31 25,31
-            L39,31 L44,25
-            L64,25 L69,31 L83,31
-            C87,31 90,34 90,38
-            L90,76
-            C90,80 87,83 83,83
-            L25,83
-            C21,83 18,80 18,76 Z" />
-
-    <!-- Camera lens -->
-    <path
-        android:fillColor="#4F46E5"
-        android:pathData="M54,42
-            A15,15 0,1 0,54,72
-            A15,15 0,1 0,54,42 Z" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,48
-            A9,9 0,1 0,54,66
-            A9,9 0,1 0,54,48 Z" />
-
-    <!-- Meter / ruler overlay -->
-    <path
-        android:fillColor="#F59E0B"
-        android:pathData="M66,58 L75,49 L94,68 L85,77 Z" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M74,55 L76,53 L78,55 L76,57 Z
-            M79,60 L81,58 L83,60 L81,62 Z
-            M84,65 L86,63 L88,65 L86,67 Z
-            M89,70 L91,68 L93,70 L91,72 Z" />
+    <path android:fillColor="#24133F" android:pathData="M0,0 L108,0 L108,108 L0,108 Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M28,22 L38,22 L38,30 L34,30 L34,78 L38,78 L38,86 L28,86 Z M80,22 L70,22 L70,30 L74,30 L74,78 L70,78 L70,86 L80,86 Z" />
+    <path android:fillColor="#F4B400" android:pathData="M43,20 L65,20 L65,88 L43,88 Z" />
+    <path android:fillColor="#24133F" android:pathData="M48,27 L51,27 L51,36 L48,36 Z M57,27 L60,27 L60,40 L57,40 Z M48,43 L51,43 L51,52 L48,52 Z M57,46 L60,46 L60,58 L57,58 Z M48,59 L51,59 L51,68 L48,68 Z M57,62 L60,62 L60,76 L57,76 Z M48,75 L51,75 L51,84 L48,84 Z" />
+    <path android:fillColor="#39FF88" android:pathData="M49,51 L59,51 L59,57 L49,57 Z M52,48 L56,48 L56,60 L52,60 Z" />
 </vector>

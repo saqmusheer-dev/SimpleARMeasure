@@ -11,8 +11,8 @@ android {
         applicationId = "com.saqmusheer.simplearmeasure"
         minSdk = 24
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.6.0"
+        versionCode = 7
+        versionName = "0.7.0"
     }
 
     buildFeatures {
@@ -42,4 +42,5 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("com.google.android.material:material:1.13.0")
     implementation("io.github.sceneview:arsceneview:2.3.3")
+    implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
 }
