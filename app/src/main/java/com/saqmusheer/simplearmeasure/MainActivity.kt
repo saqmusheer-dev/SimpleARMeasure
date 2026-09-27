@@ -30,6 +30,7 @@ import com.google.ar.core.Frame
 import com.google.ar.core.HitResult
 import com.google.ar.core.Plane
 import com.google.ar.core.Pose
+import com.google.ar.core.Session
 import com.google.ar.core.TrackingState
 import com.google.ar.core.exceptions.NotYetAvailableException
 import com.google.mlkit.vision.common.InputImage
@@ -60,6 +61,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var licenseManager: LicenseManager
 
     private var latestFrame: Frame? = null
+    private var arSession: Session? = null
     private var firstAnchor: Anchor? = null
     private var secondAnchor: Anchor? = null
     private var measureMode = MeasureMode.FLOOR
@@ -223,6 +225,7 @@ class MainActivity : AppCompatActivity() {
         arSceneView.lifecycle = lifecycle
 
         arSceneView.configureSession { session, config ->
+            arSession = session
             config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
             config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
             config.depthMode =
@@ -287,6 +290,8 @@ class MainActivity : AppCompatActivity() {
         try {
             image = frame.acquireCameraImage()
             val rotation = cameraRotationDegrees()
+            val imageWidth = image.width
+            val imageHeight = image.height
             val input = InputImage.fromMediaImage(image, rotation)
             segmentationBusy = true
             statusText.text = "Detecting person outline…"
@@ -295,7 +300,7 @@ class MainActivity : AppCompatActivity() {
                 ?.addOnSuccessListener { result ->
                     val current = latestFrame
                     if (current != null && measureMode == MeasureMode.HEIGHT && autoPersonOutline) {
-                        applyPersonMask(result.foregroundConfidenceMask, image.width, image.height, current)
+                        applyPersonMask(result.foregroundConfidenceMask, imageWidth, imageHeight, current)
                     }
                 }
                 ?.addOnFailureListener {
@@ -452,7 +457,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun estimateWallDistance(personFoot: Pose, frame: Frame): Float? {
-        val session = frame.session
+        val session = arSession ?: return null
         val planes = session.getAllTrackables(Plane::class.java)
         var best: Float? = null
         for (plane in planes) {
