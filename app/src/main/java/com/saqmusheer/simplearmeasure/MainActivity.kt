@@ -230,23 +230,6 @@ class MainActivity : AppCompatActivity() {
         statusText.text = "Area measured • Tap Reset for a new outline."
     }
 
-    private fun measureAreaAt(x: Float, y: Float) {
-        val frame = latestFrame ?: return
-        val hit = frame.hitTest(x,y).firstOrNull { it.trackable?.trackingState == TrackingState.TRACKING && ((it.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING || it.trackable is DepthPoint || it.trackable is Point) } ?: run { Toast.makeText(this,"Aim at a kitchen/floor corner and tap.",Toast.LENGTH_SHORT).show(); return }
-        createAnchorSafely(hit)?.let { areaAnchors.add(it); measurementOverlay.addAreaPoint(x,y); distanceText.text = areaAnchors.size.toString()+" points"; findViewById<Button>(R.id.finishAreaButton).visibility = if(areaAnchors.size>=3) android.view.View.VISIBLE else android.view.View.GONE; statusText.text = "Area outline • tap the next corner or Finish." }
-    }
-
-    private fun finishArea() {
-        if (areaAnchors.size < 3) return
-        val p = areaAnchors.map { it.pose }
-        var area = 0f
-        for (i in p.indices) { val j=(i+1)%p.size; area += p[i].tx()*p[j].tz()-p[j].tx()*p[i].tz() }
-        area = abs(area)/2f
-        measurementOverlay.closeArea()
-        distanceText.text = String.format(Locale.US,"%.2f m²\\n%.1f ft²",area,area*10.7639104f)
-        statusText.text = "Area measured • Tap Reset for a new outline."
-    }
-
     private fun findBestHit(frame: Frame, x: Float, y: Float): HitResult? {
         val directHits = frame.hitTest(x, y)
             .filter { it.trackable?.trackingState == TrackingState.TRACKING }
