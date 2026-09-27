@@ -765,7 +765,15 @@ class MainActivity : AppCompatActivity() {
             if (dx * dx + dy * dy <= 70f * 70f) {
                 editableAreaScreen.removeAt(index)
                 editableAreaWorld.removeAt(index)
+                if (measureMode == MeasureMode.CUSTOM_AREA && index < areaAnchors.size) {
+                    areaAnchors[index].detach()
+                    areaAnchors.removeAt(index)
+                }
                 measurementOverlay.setAreaPoints(editableAreaScreen)
+                if (editableAreaWorld.size >= 3) {
+                    lastAutoPolygonWorld = editableAreaWorld.toList()
+                    lastAutoAreaM2 = polygonArea(lastAutoPolygonWorld)
+                }
                 statusText.text = "Point removed • Eraser active."
             } else {
                 statusText.text = "Tap closer to a corner to erase it."
@@ -1113,8 +1121,13 @@ class MainActivity : AppCompatActivity() {
 
         createAnchorSafely(hit)?.let {
             areaAnchors.add(it)
+            editableAreaWorld.add(LocalPoint(it.pose.tx(), it.pose.ty(), it.pose.tz()))
+            editableAreaScreen.add(x to y)
             measurementOverlay.addAreaPoint(x, y)
+            distanceText.visibility = View.VISIBLE
+            scanNowButton.visibility = View.GONE
             distanceText.text = areaAnchors.size.toString() + " points"
+            segmentText.visibility = View.GONE
             findViewById<Button>(R.id.finishAreaButton).visibility =
                 if (areaAnchors.size >= 3) View.VISIBLE else View.GONE
             statusText.text = "Point " + areaAnchors.size + " locked • Tap the next corner."
@@ -1340,17 +1353,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun saveCurrentMeasurement() {
-        val project = currentProject() ?: run {
-            showProjects()
-            Toast.makeText(this, "Create/select a project, then save the measurement.", Toast.LENGTH_LONG).show()
-            return
-        }
-
         val points = mutableListOf<LocalPoint>()
         var area: Float? = null
         when {
-            measureMode == MeasureMode.CUSTOM_AREA && areaAnchors.size >= 3 -> {
-                points.addAll(areaAnchors.map { p -> LocalPoint(p.pose.tx(), p.pose.ty(), p.pose.tz()) })
+            measureMode == MeasureMode.CUSTOM_AREA && editableAreaWorld.size >= 3 -> {
+                points.addAll(editableAreaWorld)
                 area = polygonArea(points)
             }
             (measureMode == MeasureMode.AREA || measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.KITCHEN_TOP) &&
@@ -1370,32 +1377,76 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        val defaultTitle = "${measureMode.label} ${project.measurements.size + 1}"
-        val input = EditText(this).apply {
-            setText(defaultTitle)
-            setSelectAllOnFocus(true)
-            setSingleLine(true)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(10, 2, 10, 2)
         }
-        AlertDialog.Builder(this)
-            .setTitle("Save Measurement")
-            .setMessage("Saved locally on this phone.")
-            .setView(input)
-            .setNegativeButton("CANCEL", null)
-            .setPositiveButton("SAVE") { _, _ ->
-                localStore.addMeasurement(
-                    project,
-                    LocalMeasurement(
-                        title = input.text.toString().ifBlank { defaultTitle },
-                        mode = measureMode.label,
-                        summary = distanceText.text?.toString() ?: "",
-                        points = points,
-                        areaM2 = area
-                    ),
-                    projects
-                )
-                Toast.makeText(this, "Measurement saved locally.", Toast.LENGTH_SHORT).show()
-                updateProjectStatus()
+        val project = currentProject()
+        val projectNameInput = EditText(this).apply {
+            hint = "New project name"
+            setSingleLine(true)
+            if (project != null) {
+                setText(project.name)
+                isEnabled = false
             }
+        }
+        val titleInput = EditText(this).apply {
+            hint = "Measurement name"
+            setSingleLine(true)
+            setText("${measureMode.label} ${project?.measurements?.size?.plus(1) ?: 1}")
+            setSelectAllOnFocus(true)
+        }
+        val photoHint = TextView(this).apply {
+            text = if (project == null)
+                "A new local project will be created on this phone."
+            else
+                "Save the measurement, then optionally attach a site photo."
+            textSize = 14f
+            setTextColor(0xFF666666.toInt())
+            setPadding(0, 6, 0, 12)
+        }
+        if (project == null) box.addView(projectNameInput)
+        box.addView(titleInput)
+        box.addView(photoHint)
+
+        fun saveMeasurement(addPhoto: Boolean) {
+            val selectedProject = currentProject() ?: run {
+                val name = projectNameInput.text.toString().trim()
+                if (name.isBlank()) {
+                    Toast.makeText(this, "Enter a project name.", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                val created = localStore.addProject(projects, name)
+                currentProjectId = created.id
+                getSharedPreferences("local_projects_ui", MODE_PRIVATE).edit()
+                    .putString("current_project_id", created.id).apply()
+                created
+            }
+            val defaultTitle = "${measureMode.label} ${selectedProject.measurements.size + 1}"
+            localStore.addMeasurement(
+                selectedProject,
+                LocalMeasurement(
+                    title = titleInput.text.toString().ifBlank { defaultTitle },
+                    mode = measureMode.label,
+                    summary = distanceText.text?.toString() ?: "",
+                    points = points,
+                    areaM2 = area
+                ),
+                projects
+            )
+            updateProjectStatus()
+            Toast.makeText(this, "Measurement saved to ${selectedProject.name}.", Toast.LENGTH_LONG).show()
+            if (addPhoto) {
+                photoPickerLauncher.launch(arrayOf("image/*"))
+            }
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Save to Project")
+            .setView(box)
+            .setNegativeButton("CANCEL", null)
+            .setNeutralButton("SAVE + PHOTO") { _, _ -> saveMeasurement(true) }
+            .setPositiveButton("SAVE") { _, _ -> saveMeasurement(false) }
             .show()
     }
 
