@@ -363,6 +363,8 @@ class MainActivity : AppCompatActivity() {
                 updateFloorBoundary(frame)
             } else if (measureMode == MeasureMode.KITCHEN_TOP && kitchenTopPlane != null) {
                 updateKitchenTopBoundary(frame, kitchenTopPlane!!)
+            } else if (measureMode == MeasureMode.DIRECT) {
+                updateVerticalBoundary(frame)
             } else {
                 measurementOverlay.clearAutoFloorOutline()
             }
