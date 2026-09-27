@@ -66,6 +66,23 @@ class MeasurementOverlayView @JvmOverloads constructor(
         invalidate()
     }
 
+    fun setAreaPoints(points: List<Pair<Float, Float>>, closed: Boolean = false) {
+        areaPoints.clear()
+        areaPoints.addAll(points)
+        areaClosed = closed
+        invalidate()
+    }
+
+    fun removeAreaPoint(index: Int) {
+        if (index in areaPoints.indices) {
+            areaPoints.removeAt(index)
+            areaClosed = false
+            invalidate()
+        }
+    }
+
+    fun areaPointCount(): Int = areaPoints.size
+
     fun closeArea() {
         areaClosed = true
         invalidate()
