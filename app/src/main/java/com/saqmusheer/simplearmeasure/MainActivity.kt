@@ -80,6 +80,7 @@ class MainActivity : AppCompatActivity() {
     private var segmentationBusy = false
     private var lastSegmentationMs = 0L
     private var personMeasured = false
+    private var kitchenTopPlane: Plane? = null
 
     private val cameraPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -283,8 +284,10 @@ class MainActivity : AppCompatActivity() {
         arSceneView.onSessionUpdated = { _, frame ->
             latestFrame = frame
 
-            if (autoFloorOutline && (measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.KITCHEN_TOP || measureMode == MeasureMode.AREA)) {
+            if (autoFloorOutline && (measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA)) {
                 updateFloorBoundary(frame)
+            } else if (measureMode == MeasureMode.KITCHEN_TOP && kitchenTopPlane != null) {
+                updateKitchenTopBoundary(frame, kitchenTopPlane!!)
             } else {
                 measurementOverlay.clearAutoFloorOutline()
             }
@@ -380,11 +383,12 @@ class MainActivity : AppCompatActivity() {
         mask.rewind()
         mask.get(confidence)
 
-        val stepY = max(5, imageHeight / 120)
-        val points = ArrayList<Float>(256)
-        var topX = 0f
+        val stepY = max(4, imageHeight / 160)
+        val leftBoundary = ArrayList<Pair<Float, Float>>(160)
+        val rightBoundary = ArrayList<Pair<Float, Float>>(160)
+        val topSamples = ArrayList<Float>(12)
+        val bottomSamples = ArrayList<Float>(12)
         var topY = Float.MAX_VALUE
-        var bottomX = 0f
         var bottomY = -1f
         var rows = 0
 
@@ -393,29 +397,35 @@ class MainActivity : AppCompatActivity() {
             var right = -1
             for (x in 0 until imageWidth step stepY) {
                 val index = y * imageWidth + x
-                if (index < confidence.size && confidence[index] > 0.55f) {
+                if (index < confidence.size && confidence[index] > 0.62f) {
                     left = min(left, x)
                     right = max(right, x)
-                    if (y < topY) {
-                        topY = y.toFloat()
-                        topX = x.toFloat()
-                    }
-                    if (y > bottomY) {
-                        bottomY = y.toFloat()
-                        bottomX = x.toFloat()
-                    }
                 }
             }
-            if (right >= left) {
-                points.add(left.toFloat())
-                points.add(y.toFloat())
-                points.add(right.toFloat())
-                points.add(y.toFloat())
+            if (right >= left && right - left >= stepY * 2) {
+                leftBoundary.add(left.toFloat() to y.toFloat())
+                rightBoundary.add(right.toFloat() to y.toFloat())
                 rows++
+                if (y < topY) {
+                    topY = y.toFloat()
+                    topSamples.clear()
+                }
+                if (y == topY || y - topY <= stepY * 2) topSamples.add(((left + right) * 0.5f))
+                if (y > bottomY) {
+                    bottomY = y.toFloat()
+                    bottomSamples.clear()
+                }
+                if (bottomY - y <= stepY * 2) bottomSamples.add(((left + right) * 0.5f))
             }
         }
 
-        if (rows < 8 || bottomY < 0f) return
+        if (rows < 10 || bottomY < 0f) return
+
+        val topX = if (topSamples.isNotEmpty()) topSamples.average().toFloat() else imageWidth / 2f
+        val bottomX = if (bottomSamples.isNotEmpty()) bottomSamples.average().toFloat() else imageWidth / 2f
+        val points = ArrayList<Float>((leftBoundary.size + rightBoundary.size) * 2)
+        leftBoundary.forEach { points.add(it.first); points.add(it.second) }
+        rightBoundary.forEach { points.add(it.first); points.add(it.second) }
 
         val screenPoints = FloatArray(points.size)
         try {
@@ -430,8 +440,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         val outline = ArrayList<Pair<Float, Float>>(screenPoints.size / 2)
-        for (i in screenPoints.indices step 2) {
-            outline.add(screenPoints[i] to screenPoints[i + 1])
+        val leftCount = leftBoundary.size
+        for (i in 0 until leftCount) {
+            outline.add(screenPoints[i * 2] to screenPoints[i * 2 + 1])
+        }
+        for (i in leftCount until leftCount + rightBoundary.size) {
+            outline.add(screenPoints[i * 2] to screenPoints[i * 2 + 1])
         }
         measurementOverlay.setPersonOutline(outline)
 
@@ -543,38 +557,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val polygon = plane.polygon
-        if (!polygon.hasRemaining()) return
-        val local = FloatArray(polygon.remaining())
-        polygon.rewind()
-        polygon.get(local)
-
-        val view = FloatArray(16)
-        val projection = FloatArray(16)
-        val model = FloatArray(16)
-        val pv = FloatArray(16)
-        frame.camera.getViewMatrix(view, 0)
-        frame.camera.getProjectionMatrix(projection, 0, 0.01f, 100f)
-        plane.centerPose.toMatrix(model, 0)
-        android.opengl.Matrix.multiplyMM(pv, 0, projection, 0, view, 0)
-
-        val points = ArrayList<Pair<Float, Float>>(local.size / 2)
-        for (i in local.indices step 2) {
-            val modelPoint = floatArrayOf(local[i], 0f, local[i + 1], 1f)
-            val worldPoint = FloatArray(4)
-            android.opengl.Matrix.multiplyMV(worldPoint, 0, model, 0, modelPoint, 0)
-            val clip = FloatArray(4)
-            android.opengl.Matrix.multiplyMV(clip, 0, pv, 0, worldPoint, 0)
-            if (clip[3] <= 0f) continue
-
-            val nx = clip[0] / clip[3]
-            val ny = clip[1] / clip[3]
-            points.add(
-                ((nx + 1f) * 0.5f * measurementOverlay.width) to
-                    ((1f - ny) * 0.5f * measurementOverlay.height)
-            )
-        }
-
+        val points = projectPlanePolygon(frame, plane)
         if (points.size >= 3) measurementOverlay.setAutoFloorOutline(points)
     }
 
@@ -592,6 +575,10 @@ class MainActivity : AppCompatActivity() {
     private fun measureAt(x: Float, y: Float) {
         if (measureMode == MeasureMode.AREA) {
             measureAreaAt(x, y)
+            return
+        }
+        if (measureMode == MeasureMode.KITCHEN_TOP) {
+            measureKitchenTopAt(x, y)
             return
         }
 
@@ -651,6 +638,112 @@ class MainActivity : AppCompatActivity() {
 
         measurementOverlay.setSecondPoint(x, y)
         showDistance(meters)
+    }
+
+    private fun measureKitchenTopAt(x: Float, y: Float) {
+        val frame = latestFrame ?: return
+        val offsets = floatArrayOf(0f, -24f, 24f, -48f, 48f)
+        val hits = offsets.flatMap { ox ->
+            offsets.map { oy -> frame.hitTest(x + ox, y + oy) }
+        }.flatten().filter {
+            it.trackable?.trackingState == TrackingState.TRACKING
+        }
+
+        val hit = hits.firstOrNull {
+            (it.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING
+        }
+        val plane = hit?.trackable as? Plane
+        if (plane == null) {
+            Toast.makeText(
+                this,
+                "Aim at the kitchen countertop and tap its surface.",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+
+        kitchenTopPlane = plane
+        updateKitchenTopBoundary(frame, plane)
+
+        val polygon = plane.polygon
+        if (!polygon.hasRemaining()) return
+        polygon.rewind()
+        val local = FloatArray(polygon.remaining())
+        polygon.get(local)
+        if (local.size < 6) return
+
+        var area = 0f
+        var minX = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE
+        var minZ = Float.MAX_VALUE
+        var maxZ = -Float.MAX_VALUE
+        for (i in local.indices step 2) {
+            val j = (i + 2) % local.size
+            area += local[i] * local[j + 1] - local[j] * local[i + 1]
+            minX = min(minX, local[i])
+            maxX = max(maxX, local[i])
+            minZ = min(minZ, local[i + 1])
+            maxZ = max(maxZ, local[i + 1])
+        }
+        area = abs(area) / 2f
+        val width = maxX - minX
+        val depth = maxZ - minZ
+        distanceText.text = String.format(
+            Locale.US,
+            "%.2f m²\n%.1f ft²\n%.1f × %.1f ft",
+            area,
+            area * 10.7639104f,
+            width * 3.28084f,
+            depth * 3.28084f
+        )
+        statusText.text = "Kitchen top detected • Shape and area updated."
+    }
+
+    private fun updateKitchenTopBoundary(frame: Frame, plane: Plane) {
+        if (plane.trackingState != TrackingState.TRACKING || plane.subsumedBy != null) {
+            measurementOverlay.clearAutoFloorOutline()
+            return
+        }
+        val points = projectPlanePolygon(frame, plane)
+        if (points.size >= 3) {
+            measurementOverlay.setAutoFloorOutline(points)
+        } else {
+            measurementOverlay.clearAutoFloorOutline()
+        }
+    }
+
+    private fun projectPlanePolygon(frame: Frame, plane: Plane): List<Pair<Float, Float>> {
+        val polygon = plane.polygon
+        if (!polygon.hasRemaining()) return emptyList()
+        polygon.rewind()
+        val local = FloatArray(polygon.remaining())
+        polygon.get(local)
+
+        val view = FloatArray(16)
+        val projection = FloatArray(16)
+        val model = FloatArray(16)
+        val pv = FloatArray(16)
+        frame.camera.getViewMatrix(view, 0)
+        frame.camera.getProjectionMatrix(projection, 0, 0.01f, 100f)
+        plane.centerPose.toMatrix(model, 0)
+        android.opengl.Matrix.multiplyMM(pv, 0, projection, 0, view, 0)
+
+        val points = ArrayList<Pair<Float, Float>>(local.size / 2)
+        for (i in local.indices step 2) {
+            val modelPoint = floatArrayOf(local[i], 0f, local[i + 1], 1f)
+            val worldPoint = FloatArray(4)
+            android.opengl.Matrix.multiplyMV(worldPoint, 0, model, 0, modelPoint, 0)
+            val clip = FloatArray(4)
+            android.opengl.Matrix.multiplyMV(clip, 0, pv, 0, worldPoint, 0)
+            if (clip[3] <= 0f) continue
+            val nx = clip[0] / clip[3]
+            val ny = clip[1] / clip[3]
+            points.add(
+                ((nx + 1f) * 0.5f * measurementOverlay.width) to
+                    ((1f - ny) * 0.5f * measurementOverlay.height)
+            )
+        }
+        return points
     }
 
     private fun measureAreaAt(x: Float, y: Float) {
@@ -758,6 +851,7 @@ class MainActivity : AppCompatActivity() {
         firstAnchor = null
         secondAnchor = null
         personMeasured = false
+        kitchenTopPlane = null
         measurementOverlay.clear()
         findViewById<Button>(R.id.finishAreaButton)?.visibility = View.GONE
         distanceText.text = "—"
