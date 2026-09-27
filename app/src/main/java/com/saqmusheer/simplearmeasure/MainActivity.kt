@@ -49,7 +49,8 @@ class MainActivity : AppCompatActivity() {
 
     private enum class MeasureMode(val label: String) {
         FLOOR("Floor"),
-        HEIGHT("Height"),
+        KITCHEN_TOP("Kitchen Top"),
+        HEIGHT("Person Height"),
         DIRECT("3D"),
         AREA("Area")
     }
@@ -73,6 +74,7 @@ class MainActivity : AppCompatActivity() {
     private var autoFloorOutline = true
     private var wallReference = true
     private var showRuler = true
+    private var arStarted = false
 
     private var subjectSegmenter: SubjectSegmenter? = null
     private var segmentationBusy = false
@@ -116,6 +118,7 @@ class MainActivity : AppCompatActivity() {
         measurementOverlay = findViewById(R.id.measurementOverlay)
 
         findViewById<Button>(R.id.floorButton).setOnClickListener { selectMode(MeasureMode.FLOOR) }
+        findViewById<Button>(R.id.kitchenTopButton).setOnClickListener { selectMode(MeasureMode.KITCHEN_TOP) }
         findViewById<Button>(R.id.heightButton).setOnClickListener { selectMode(MeasureMode.HEIGHT) }
         findViewById<Button>(R.id.directButton).setOnClickListener { selectMode(MeasureMode.DIRECT) }
         findViewById<Button>(R.id.areaButton).setOnClickListener { selectMode(MeasureMode.AREA) }
@@ -135,8 +138,28 @@ class MainActivity : AppCompatActivity() {
 
         // Android does not display runtime permissions during APK installation.
         // We request CAMERA immediately on the first launch before starting AR.
-        if (hasCameraPermission()) startAr()
-        else cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        ensureCameraPermission()
+    }
+
+    private fun ensureCameraPermission() {
+        if (!::statusText.isInitialized) return
+        if (hasCameraPermission()) {
+            if (!arStarted) startAr()
+        } else {
+            statusText.text = "Camera permission is required for AR measuring."
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::statusText.isInitialized) {
+            if (hasCameraPermission()) {
+                if (!arStarted) startAr()
+            } else {
+                statusText.text = "Camera permission is required for AR measuring."
+            }
+        }
     }
 
     private fun showLicenseScreen() {
@@ -233,6 +256,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startAr() {
+        if (arStarted || !hasCameraPermission()) return
+        arStarted = true
         statusText.text = "Floor mode • Move slowly until the floor is detected."
         arSceneView.lifecycle = lifecycle
 
@@ -258,7 +283,7 @@ class MainActivity : AppCompatActivity() {
         arSceneView.onSessionUpdated = { _, frame ->
             latestFrame = frame
 
-            if (autoFloorOutline && (measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA)) {
+            if (autoFloorOutline && (measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.KITCHEN_TOP || measureMode == MeasureMode.AREA)) {
                 updateFloorBoundary(frame)
             } else {
                 measurementOverlay.clearAutoFloorOutline()
@@ -557,6 +582,7 @@ class MainActivity : AppCompatActivity() {
         measureMode = mode
         modeText.text = mode.label.uppercase(Locale.US) + " MODE"
         findViewById<Button>(R.id.floorButton).alpha = if (mode == MeasureMode.FLOOR) 1f else 0.60f
+        findViewById<Button>(R.id.kitchenTopButton).alpha = if (mode == MeasureMode.KITCHEN_TOP) 1f else 0.60f
         findViewById<Button>(R.id.heightButton).alpha = if (mode == MeasureMode.HEIGHT) 1f else 0.60f
         findViewById<Button>(R.id.directButton).alpha = if (mode == MeasureMode.DIRECT) 1f else 0.60f
         findViewById<Button>(R.id.areaButton).alpha = if (mode == MeasureMode.AREA) 1f else 0.60f
@@ -617,7 +643,7 @@ class MainActivity : AppCompatActivity() {
         val dz = b.tz() - a.tz()
 
         val meters = when (measureMode) {
-            MeasureMode.FLOOR -> sqrt(dx * dx + dz * dz)
+            MeasureMode.FLOOR, MeasureMode.KITCHEN_TOP -> sqrt(dx * dx + dz * dz)
             MeasureMode.HEIGHT -> abs(dy)
             MeasureMode.DIRECT -> sqrt(dx * dx + dy * dy + dz * dz)
             MeasureMode.AREA -> 0f
@@ -691,7 +717,7 @@ class MainActivity : AppCompatActivity() {
             (hit.trackable as? Plane)?.type == Plane.Type.VERTICAL
 
         return when (measureMode) {
-            MeasureMode.FLOOR ->
+            MeasureMode.FLOOR, MeasureMode.KITCHEN_TOP ->
                 hits.firstOrNull { horizontal(it) }
                     ?: hits.firstOrNull { it.trackable is DepthPoint }
                     ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
