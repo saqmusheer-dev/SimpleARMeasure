@@ -59,6 +59,19 @@
         </LinearLayout>
 
         <Button
+            android:id="@+id/projectsButton"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:layout_marginStart="8dp"
+            android:backgroundTint="#CC111111"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:padding="0dp"
+            android:text="▣"
+            android:textColor="@android:color/white"
+            android:textSize="22sp" />
+
+        <Button
             android:id="@+id/settingsButton"
             android:layout_width="52dp"
             android:layout_height="52dp"
@@ -212,8 +225,22 @@
             android:textStyle="bold"
             android:visibility="gone" />
 
-        <Button
-            android:id="@+id/resetButton"
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center">
+
+            <Button
+                android:id="@+id/saveButton"
+                android:layout_width="120dp"
+                android:layout_height="46dp"
+                android:layout_marginTop="10dp"
+                android:layout_marginEnd="8dp"
+                android:text="SAVE" />
+
+            <Button
+                android:id="@+id/resetButton"
             android:layout_width="120dp"
             android:layout_height="46dp"
             android:layout_marginTop="10dp"
