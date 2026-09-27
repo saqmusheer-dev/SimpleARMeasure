@@ -52,7 +52,8 @@ class MainActivity : AppCompatActivity() {
         KITCHEN_TOP("Kitchen Top"),
         HEIGHT("Person Height"),
         DIRECT("3D"),
-        AREA("Area")
+        AREA("Auto Area"),
+        CUSTOM_AREA("Custom Area")
     }
 
     private lateinit var arSceneView: ARSceneView
@@ -123,6 +124,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.heightButton).setOnClickListener { selectMode(MeasureMode.HEIGHT) }
         findViewById<Button>(R.id.directButton).setOnClickListener { selectMode(MeasureMode.DIRECT) }
         findViewById<Button>(R.id.areaButton).setOnClickListener { selectMode(MeasureMode.AREA) }
+        findViewById<Button>(R.id.customAreaButton).setOnClickListener { selectMode(MeasureMode.CUSTOM_AREA) }
         findViewById<Button>(R.id.finishAreaButton).setOnClickListener { finishArea() }
         findViewById<Button>(R.id.resetButton).setOnClickListener { resetMeasurement() }
         findViewById<Button>(R.id.settingsButton).setOnClickListener { showSettings() }
@@ -573,20 +575,15 @@ class MainActivity : AppCompatActivity() {
             measurementOverlay.clearAutoFloorOutline()
             return
         }
-
         val centerX = measurementOverlay.width / 2f
         val centerY = measurementOverlay.height / 2f
-
-        // Prefer the horizontal surface currently under the camera centre.
-        val targetPlane = frame.hitTest(centerX, centerY)
-            .asSequence()
+        val targetPlane = frame.hitTest(centerX, centerY).asSequence()
             .mapNotNull { it.trackable as? Plane }
             .firstOrNull {
                 it.trackingState == TrackingState.TRACKING &&
                     it.subsumedBy == null &&
                     it.type == Plane.Type.HORIZONTAL_UPWARD_FACING
             }
-
         val plane = targetPlane ?: session.getAllTrackables(Plane::class.java)
             .filter {
                 it.trackingState == TrackingState.TRACKING &&
@@ -594,14 +591,62 @@ class MainActivity : AppCompatActivity() {
                     it.type == Plane.Type.HORIZONTAL_UPWARD_FACING
             }
             .maxByOrNull { it.extentX * it.extentZ }
-
         if (plane == null) {
             measurementOverlay.clearAutoFloorOutline()
             return
         }
-
         val points = projectPlanePolygon(frame, plane)
         if (points.size >= 3) measurementOverlay.setAutoFloorOutline(points)
+        val now = SystemClock.elapsedRealtime()
+        if ((measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA) &&
+            now - lastAutoAreaUpdateMs > 500L) {
+            lastAutoAreaUpdateMs = now
+            updateAutoPlaneMeasurement(plane)
+        }
+    }
+
+    private fun updateAutoPlaneMeasurement(plane: Plane) {
+        val polygon = plane.polygon
+        if (!polygon.hasRemaining()) return
+        polygon.rewind()
+        val local = FloatArray(polygon.remaining())
+        polygon.get(local)
+        if (local.size < 6) return
+        var area = 0f
+        var minX = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE
+        var minZ = Float.MAX_VALUE
+        var maxZ = -Float.MAX_VALUE
+        for (i in local.indices step 2) {
+            val j = (i + 2) % local.size
+            val x1 = local[i]
+            val z1 = local[i + 1]
+            val x2 = local[j]
+            val z2 = local[j + 1]
+            area += x1 * z2 - x2 * z1
+            minX = min(minX, x1)
+            maxX = max(maxX, x1)
+            minZ = min(minZ, z1)
+            maxZ = max(maxZ, z1)
+        }
+        area = abs(area) / 2f
+        val length = maxX - minX
+        val width = maxZ - minZ
+        if (area > 0.01f) {
+            distanceText.text = String.format(
+                Locale.US,
+                "%.2f m²\n%.1f ft²\nL %.1f ft × W %.1f ft",
+                area,
+                area * 10.7639104f,
+                length * 3.28084f,
+                width * 3.28084f
+            )
+            statusText.text = if (measureMode == MeasureMode.FLOOR) {
+                "Floor detected • Green outline is the measured area."
+            } else {
+                "Auto area detected • Green outline is the measured area."
+            }
+        }
     }
 
     private fun selectMode(mode: MeasureMode) {
@@ -612,11 +657,12 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.heightButton).alpha = if (mode == MeasureMode.HEIGHT) 1f else 0.60f
         findViewById<Button>(R.id.directButton).alpha = if (mode == MeasureMode.DIRECT) 1f else 0.60f
         findViewById<Button>(R.id.areaButton).alpha = if (mode == MeasureMode.AREA) 1f else 0.60f
+        findViewById<Button>(R.id.customAreaButton).alpha = if (mode == MeasureMode.CUSTOM_AREA) 1f else 0.60f
         resetMeasurement()
     }
 
     private fun measureAt(x: Float, y: Float) {
-        if (measureMode == MeasureMode.AREA) {
+        if (measureMode == MeasureMode.CUSTOM_AREA) {
             measureAreaAt(x, y)
             return
         }
@@ -798,9 +844,13 @@ class MainActivity : AppCompatActivity() {
             it.trackable?.trackingState == TrackingState.TRACKING
         }
 
-        val hit = hits.firstOrNull {
+        val exactHits = frame.hitTest(x, y).filter { it.trackable?.trackingState == TrackingState.TRACKING }
+        val hit = exactHits.firstOrNull {
             (it.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING
-        } ?: hits.firstOrNull { it.trackable is DepthPoint }
+        } ?: exactHits.firstOrNull { it.trackable is DepthPoint }
+            ?: hits.firstOrNull {
+                (it.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING
+            } ?: hits.firstOrNull { it.trackable is DepthPoint }
             ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
 
         if (hit == null) {
@@ -870,7 +920,7 @@ class MainActivity : AppCompatActivity() {
                     ?: hits.firstOrNull { it.trackable is Plane }
                     ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
 
-            MeasureMode.AREA -> null
+            MeasureMode.AREA, MeasureMode.CUSTOM_AREA -> null
         }
     }
 
@@ -895,6 +945,7 @@ class MainActivity : AppCompatActivity() {
         secondAnchor = null
         personMeasured = false
         kitchenTopPlane = null
+        lastAutoAreaUpdateMs = 0L
         measurementOverlay.clear()
         findViewById<Button>(R.id.finishAreaButton)?.visibility = View.GONE
         distanceText.text = "—"
