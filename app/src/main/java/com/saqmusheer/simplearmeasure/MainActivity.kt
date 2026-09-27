@@ -123,6 +123,13 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.resetButton).setOnClickListener { resetMeasurement() }
         findViewById<Button>(R.id.settingsButton).setOnClickListener { showSettings() }
 
+        measurementOverlay.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_UP) {
+                measureAt(event.x, event.y)
+            }
+            true
+        }
+
         findViewById<View>(R.id.rulerView).visibility = if (showRuler) View.VISIBLE else View.GONE
         selectMode(MeasureMode.FLOOR)
 
@@ -227,6 +234,7 @@ class MainActivity : AppCompatActivity() {
 
         arSceneView.configureSession { session, config ->
             arSession = session
+            arSceneView.planeRenderer.isVisible = false
             config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
             config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
             config.depthMode =
@@ -274,12 +282,6 @@ class MainActivity : AppCompatActivity() {
             statusText.text = "AR failed: " + (exception.message ?: "Unknown error")
         }
 
-        arSceneView.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_UP) {
-                measureAt(event.x, event.y)
-            }
-            true
-        }
     }
 
     private fun maybeSegmentPerson(frame: Frame) {
@@ -485,7 +487,21 @@ class MainActivity : AppCompatActivity() {
             measurementOverlay.clearAutoFloorOutline()
             return
         }
-        val plane = session.getAllTrackables(Plane::class.java)
+
+        val centerX = measurementOverlay.width / 2f
+        val centerY = measurementOverlay.height / 2f
+
+        // Prefer the horizontal surface currently under the camera centre.
+        val targetPlane = frame.hitTest(centerX, centerY)
+            .asSequence()
+            .mapNotNull { it.trackable as? Plane }
+            .firstOrNull {
+                it.trackingState == TrackingState.TRACKING &&
+                    it.subsumedBy == null &&
+                    it.type == Plane.Type.HORIZONTAL_UPWARD_FACING
+            }
+
+        val plane = targetPlane ?: session.getAllTrackables(Plane::class.java)
             .filter {
                 it.trackingState == TrackingState.TRACKING &&
                     it.subsumedBy == null &&
@@ -501,6 +517,7 @@ class MainActivity : AppCompatActivity() {
         val polygon = plane.polygon
         if (!polygon.hasRemaining()) return
         val local = FloatArray(polygon.remaining())
+        polygon.rewind()
         polygon.get(local)
 
         val view = FloatArray(16)
@@ -514,12 +531,13 @@ class MainActivity : AppCompatActivity() {
 
         val points = ArrayList<Pair<Float, Float>>(local.size / 2)
         for (i in local.indices step 2) {
-            val world = floatArrayOf(local[i], 0f, local[i + 1], 1f)
-            val modelWorld = FloatArray(4)
-            android.opengl.Matrix.multiplyMV(modelWorld, 0, model, 0, world, 0)
+            val modelPoint = floatArrayOf(local[i], 0f, local[i + 1], 1f)
+            val worldPoint = FloatArray(4)
+            android.opengl.Matrix.multiplyMV(worldPoint, 0, model, 0, modelPoint, 0)
             val clip = FloatArray(4)
-            android.opengl.Matrix.multiplyMV(clip, 0, pv, 0, modelWorld, 0)
+            android.opengl.Matrix.multiplyMV(clip, 0, pv, 0, worldPoint, 0)
             if (clip[3] <= 0f) continue
+
             val nx = clip[0] / clip[3]
             val ny = clip[1] / clip[3]
             points.add(
@@ -527,6 +545,7 @@ class MainActivity : AppCompatActivity() {
                     ((1f - ny) * 0.5f * measurementOverlay.height)
             )
         }
+
         if (points.size >= 3) measurementOverlay.setAutoFloorOutline(points)
     }
 
@@ -606,13 +625,24 @@ class MainActivity : AppCompatActivity() {
 
     private fun measureAreaAt(x: Float, y: Float) {
         val frame = latestFrame ?: return
-        val hit = frame.hitTest(x, y).firstOrNull {
-            it.trackable?.trackingState == TrackingState.TRACKING &&
-                ((it.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING ||
-                    it.trackable is DepthPoint ||
-                    it.trackable is com.google.ar.core.Point)
-        } ?: run {
-            Toast.makeText(this, "Aim at a kitchen/floor corner and tap.", Toast.LENGTH_SHORT).show()
+        val offsets = floatArrayOf(0f, -24f, 24f, -48f, 48f)
+        val hits = offsets.flatMap { ox ->
+            offsets.map { oy -> frame.hitTest(x + ox, y + oy) }
+        }.flatten().filter {
+            it.trackable?.trackingState == TrackingState.TRACKING
+        }
+
+        val hit = hits.firstOrNull {
+            (it.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING
+        } ?: hits.firstOrNull { it.trackable is DepthPoint }
+            ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
+
+        if (hit == null) {
+            Toast.makeText(
+                this,
+                "Move slowly until the surface is detected, then tap the corner.",
+                Toast.LENGTH_SHORT
+            ).show()
             return
         }
 
@@ -622,7 +652,7 @@ class MainActivity : AppCompatActivity() {
             distanceText.text = areaAnchors.size.toString() + " points"
             findViewById<Button>(R.id.finishAreaButton).visibility =
                 if (areaAnchors.size >= 3) View.VISIBLE else View.GONE
-            statusText.text = "Area outline • tap the next corner or Finish."
+            statusText.text = "Point " + areaAnchors.size + " locked • Tap the next corner."
         }
     }
 
@@ -641,27 +671,39 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun findBestHit(frame: Frame, x: Float, y: Float): HitResult? {
-        val directHits = frame.hitTest(x, y).filter { it.trackable?.trackingState == TrackingState.TRACKING }
-        val hits = if (measureMode == MeasureMode.HEIGHT && directHits.none { it.trackable is DepthPoint }) {
-            val offsets = floatArrayOf(-28f, -14f, 14f, 28f)
-            offsets.flatMap { ox -> offsets.map { oy -> frame.hitTest(x + ox, y + oy) } }
-                .flatten().filter { it.trackable?.trackingState == TrackingState.TRACKING }
-        } else directHits
+        val offsets = floatArrayOf(0f, -24f, 24f, -48f, 48f)
+        val hits = offsets.flatMap { ox ->
+            offsets.map { oy -> frame.hitTest(x + ox, y + oy) }
+        }.flatten().filter {
+            it.trackable?.trackingState == TrackingState.TRACKING
+        }
 
         if (hits.isEmpty()) return null
-        fun horizontal(hit: HitResult) = (hit.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING
-        fun vertical(hit: HitResult) = (hit.trackable as? Plane)?.type == Plane.Type.VERTICAL
+
+        fun horizontal(hit: HitResult) =
+            (hit.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING
+
+        fun vertical(hit: HitResult) =
+            (hit.trackable as? Plane)?.type == Plane.Type.VERTICAL
 
         return when (measureMode) {
             MeasureMode.FLOOR ->
-                hits.firstOrNull { horizontal(it) } ?: hits.firstOrNull { it.trackable is DepthPoint }
-                    ?: hits.firstOrNull { vertical(it) } ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
-            MeasureMode.HEIGHT ->
-                hits.firstOrNull { it.trackable is DepthPoint } ?: hits.firstOrNull { vertical(it) }
-                    ?: hits.firstOrNull { horizontal(it) } ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
-            MeasureMode.DIRECT ->
-                hits.firstOrNull { it.trackable is DepthPoint } ?: hits.firstOrNull { it.trackable is Plane }
+                hits.firstOrNull { horizontal(it) }
+                    ?: hits.firstOrNull { it.trackable is DepthPoint }
                     ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
+                    ?: hits.firstOrNull { vertical(it) }
+
+            MeasureMode.HEIGHT ->
+                hits.firstOrNull { it.trackable is DepthPoint }
+                    ?: hits.firstOrNull { vertical(it) }
+                    ?: hits.firstOrNull { horizontal(it) }
+                    ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
+
+            MeasureMode.DIRECT ->
+                hits.firstOrNull { it.trackable is DepthPoint }
+                    ?: hits.firstOrNull { it.trackable is Plane }
+                    ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
+
             MeasureMode.AREA -> null
         }
     }
