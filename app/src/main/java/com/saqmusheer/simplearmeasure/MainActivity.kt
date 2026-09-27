@@ -50,6 +50,8 @@ import kotlin.math.sqrt
 
 class MainActivity : AppCompatActivity() {
 
+    private enum class EditTool { NONE, PEN, ERASER }
+
     private enum class MeasureMode(val label: String) {
         FLOOR("Floor"),
         KITCHEN_TOP("Kitchen Top"),
@@ -62,6 +64,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var arSceneView: ARSceneView
     private lateinit var statusText: TextView
     private lateinit var distanceText: TextView
+    private lateinit var segmentText: TextView
+    private lateinit var scanNowButton: Button
     private lateinit var modeText: TextView
     private lateinit var measurementOverlay: MeasurementOverlayView
     private lateinit var licenseManager: LicenseManager
@@ -80,6 +84,10 @@ class MainActivity : AppCompatActivity() {
     private var secondAnchor: Anchor? = null
     private var measureMode = MeasureMode.FLOOR
     private val areaAnchors = mutableListOf<Anchor>()
+    private val editableAreaWorld = mutableListOf<LocalPoint>()
+    private val editableAreaScreen = mutableListOf<Pair<Float, Float>>()
+    private var editTool = EditTool.NONE
+    private var editingAutoArea = false
 
     private val prefs by lazy { getSharedPreferences("measure_settings", MODE_PRIVATE) }
     private var autoPersonOutline = true
@@ -171,6 +179,8 @@ class MainActivity : AppCompatActivity() {
         arSceneView = findViewById(R.id.arSceneView)
         statusText = findViewById(R.id.statusText)
         distanceText = findViewById(R.id.distanceText)
+        segmentText = findViewById(R.id.segmentText)
+        scanNowButton = findViewById(R.id.scanNowButton)
         modeText = findViewById(R.id.modeText)
         measurementOverlay = findViewById(R.id.measurementOverlay)
 
@@ -181,6 +191,11 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.areaButton).setOnClickListener { selectMode(MeasureMode.AREA) }
         findViewById<Button>(R.id.customAreaButton).setOnClickListener { selectMode(MeasureMode.CUSTOM_AREA) }
         findViewById<Button>(R.id.finishAreaButton).setOnClickListener { finishArea() }
+        findViewById<Button>(R.id.scanNowButton).setOnClickListener { scanNow() }
+        findViewById<Button>(R.id.penButton).setOnClickListener { setEditTool(EditTool.PEN) }
+        findViewById<Button>(R.id.eraserButton).setOnClickListener { setEditTool(EditTool.ERASER) }
+        findViewById<Button>(R.id.undoAreaButton).setOnClickListener { undoAreaEdit() }
+        findViewById<Button>(R.id.doneAreaButton).setOnClickListener { finishAreaEdit() }
         findViewById<Button>(R.id.resetButton).setOnClickListener { resetMeasurement() }
         findViewById<Button>(R.id.settingsButton).setOnClickListener { showSettings() }
         findViewById<Button>(R.id.projectsButton).setOnClickListener { showProjects() }
@@ -663,6 +678,145 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun scanNow() {
+        if (measureMode == MeasureMode.AREA || measureMode == MeasureMode.FLOOR) {
+            val frame = latestFrame
+            val session = arSession
+            val plane = if (frame != null && session != null) {
+                val cx = measurementOverlay.width / 2f
+                val cy = measurementOverlay.height / 2f
+                frame.hitTest(cx, cy).asSequence()
+                    .mapNotNull { it.trackable as? Plane }
+                    .firstOrNull { it.trackingState == TrackingState.TRACKING && it.type == Plane.Type.HORIZONTAL_UPWARD_FACING }
+                    ?: session.getAllTrackables(Plane::class.java)
+                        .filter { it.trackingState == TrackingState.TRACKING && it.type == Plane.Type.HORIZONTAL_UPWARD_FACING }
+                        .maxByOrNull { it.extentX * it.extentZ }
+            } else null
+            if (plane != null) {
+                updateAutoPlaneMeasurement(plane)
+                statusText.text = "Scan complete • Review the green outline. Use Pen or Eraser to edit."
+            } else {
+                statusText.text = "Scanning… move slowly over the floor and try again."
+            }
+        } else if (measureMode == MeasureMode.KITCHEN_TOP) {
+            statusText.text = "Kitchen Top • Tap the countertop to scan its outline."
+        } else {
+            resetMeasurement()
+        }
+    }
+
+    private fun setEditTool(tool: EditTool) {
+        editTool = if (editTool == tool) EditTool.NONE else tool
+        if (measureMode == MeasureMode.AREA || measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.KITCHEN_TOP) {
+            if (editableAreaWorld.isEmpty() && lastAutoPolygonWorld.size >= 3) {
+                editableAreaWorld.clear()
+                editableAreaWorld.addAll(lastAutoPolygonWorld)
+                editableAreaScreen.clear()
+                val frame = latestFrame
+                val plane = kitchenTopPlane
+                if (frame != null && plane != null && measureMode == MeasureMode.KITCHEN_TOP) {
+                    editableAreaScreen.addAll(projectPlanePolygon(frame, plane))
+                } else {
+                    editableAreaScreen.addAll(projectCurrentAutoPolygon(frame))
+                }
+                measurementOverlay.setAreaPoints(editableAreaScreen)
+                editingAutoArea = true
+            }
+        }
+        statusText.text = when (editTool) {
+            EditTool.PEN -> "Pen active • Tap the surface to add a corner."
+            EditTool.ERASER -> "Eraser active • Tap a point to remove it."
+            EditTool.NONE -> "Edit complete • Review the outline or tap Scan Now."
+        }
+    }
+
+    private fun projectCurrentAutoPolygon(frame: Frame?): List<Pair<Float, Float>> {
+        if (frame == null || lastAutoPolygonWorld.size < 3) return emptyList()
+        val view = FloatArray(16)
+        val projection = FloatArray(16)
+        val pv = FloatArray(16)
+        frame.camera.getViewMatrix(view, 0)
+        frame.camera.getProjectionMatrix(projection, 0, 0.01f, 100f)
+        android.opengl.Matrix.multiplyMM(pv, 0, projection, 0, view, 0)
+        return lastAutoPolygonWorld.mapNotNull { p ->
+            val clip = FloatArray(4)
+            android.opengl.Matrix.multiplyMV(clip, 0, pv, 0, floatArrayOf(p.x, p.y, p.z, 1f), 0)
+            if (clip[3] <= 0f) null else {
+                val nx = clip[0] / clip[3]
+                val ny = clip[1] / clip[3]
+                ((nx + 1f) * 0.5f * measurementOverlay.width) to
+                    ((1f - ny) * 0.5f * measurementOverlay.height)
+            }
+        }
+    }
+
+    private fun handleAreaEditTap(x: Float, y: Float): Boolean {
+        if (editTool == EditTool.NONE) return false
+        if (editTool == EditTool.ERASER) {
+            if (editableAreaScreen.size <= 3) return true
+            val index = editableAreaScreen.indices.minByOrNull { i ->
+                val dx = editableAreaScreen[i].first - x
+                val dy = editableAreaScreen[i].second - y
+                dx * dx + dy * dy
+            } ?: return true
+            val p = editableAreaScreen[index]
+            val dx = p.first - x
+            val dy = p.second - y
+            if (dx * dx + dy * dy <= 70f * 70f) {
+                editableAreaScreen.removeAt(index)
+                editableAreaWorld.removeAt(index)
+                measurementOverlay.setAreaPoints(editableAreaScreen)
+                statusText.text = "Point removed • Eraser active."
+            } else {
+                statusText.text = "Tap closer to a corner to erase it."
+            }
+            return true
+        }
+
+        val frame = latestFrame ?: return true
+        val hit = findSurfaceHit(frame, x, y) ?: return true
+        val pose = hit.hitPose
+        editableAreaWorld.add(LocalPoint(pose.tx(), pose.ty(), pose.tz()))
+        editableAreaScreen.add(x to y)
+        measurementOverlay.setAreaPoints(editableAreaScreen)
+        statusText.text = "Corner added • Pen active."
+        return true
+    }
+
+    private fun findSurfaceHit(frame: Frame, x: Float, y: Float): HitResult? {
+        val offsets = floatArrayOf(0f, -12f, 12f, -24f, 24f)
+        val hits = offsets.flatMap { ox -> offsets.map { oy -> frame.hitTest(x + ox, y + oy) } }
+            .flatten().filter { it.trackable?.trackingState == TrackingState.TRACKING }
+        return hits.firstOrNull { (it.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING }
+            ?: hits.firstOrNull { it.trackable is DepthPoint }
+            ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
+    }
+
+    private fun undoAreaEdit() {
+        if (editableAreaWorld.isNotEmpty()) {
+            editableAreaWorld.removeAt(editableAreaWorld.lastIndex)
+            if (editableAreaScreen.isNotEmpty()) editableAreaScreen.removeAt(editableAreaScreen.lastIndex)
+            measurementOverlay.setAreaPoints(editableAreaScreen)
+            statusText.text = "Last area point removed."
+        }
+    }
+
+    private fun finishAreaEdit() {
+        if (editableAreaWorld.size < 3) {
+            Toast.makeText(this, "Keep at least 3 points in the area.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        lastAutoPolygonWorld = editableAreaWorld.toList()
+        lastAutoAreaM2 = polygonArea(lastAutoPolygonWorld)
+        measurementOverlay.setAreaPoints(editableAreaScreen, true)
+        measurementOverlay.setAutoFloorOutline(emptyList())
+        distanceText.visibility = View.VISIBLE
+        scanNowButton.visibility = View.GONE
+        distanceText.text = String.format(Locale.US, "%.2f m²\n%.1f ft²", lastAutoAreaM2, lastAutoAreaM2 * 10.7639104f)
+        statusText.text = "Area edited • Pen adds, Eraser removes. Tap Save to store it."
+        editTool = EditTool.NONE
+    }
+
     private fun updateAutoPlaneMeasurement(plane: Plane) {
         val polygon = plane.polygon
         if (!polygon.hasRemaining()) return
@@ -693,6 +847,9 @@ class MainActivity : AppCompatActivity() {
         lastAutoAreaM2 = area
         lastAutoPolygonWorld = planeWorldPoints(plane)
         if (area > 0.01f) {
+            distanceText.visibility = View.VISIBLE
+            scanNowButton.visibility = View.GONE
+            segmentText.visibility = View.GONE
             distanceText.text = String.format(
                 Locale.US,
                 "%.2f m²\n%.1f ft²\nL %.1f ft × W %.1f ft",
@@ -718,10 +875,13 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.directButton).alpha = if (mode == MeasureMode.DIRECT) 1f else 0.60f
         findViewById<Button>(R.id.areaButton).alpha = if (mode == MeasureMode.AREA) 1f else 0.60f
         findViewById<Button>(R.id.customAreaButton).alpha = if (mode == MeasureMode.CUSTOM_AREA) 1f else 0.60f
+        findViewById<View>(R.id.areaTools).visibility =
+            if (mode == MeasureMode.AREA || mode == MeasureMode.CUSTOM_AREA || mode == MeasureMode.KITCHEN_TOP) View.VISIBLE else View.GONE
         resetMeasurement()
     }
 
     private fun measureAt(x: Float, y: Float) {
+        if (handleAreaEditTap(x, y)) return
         if (measureMode == MeasureMode.CUSTOM_AREA) {
             measureAreaAt(x, y)
             return
@@ -756,7 +916,11 @@ class MainActivity : AppCompatActivity() {
                 return
             }
             measurementOverlay.setFirstPoint(x, y, measureMode == MeasureMode.HEIGHT)
+            distanceText.visibility = View.VISIBLE
+            scanNowButton.visibility = View.GONE
             distanceText.text = "A"
+            segmentText.visibility = View.VISIBLE
+            segmentText.text = "A • tap the second point"
             statusText.text = if (measureMode == MeasureMode.HEIGHT) {
                 "Point A = feet • Aim at the top of the head and tap."
             } else {
@@ -839,6 +1003,9 @@ class MainActivity : AppCompatActivity() {
         val depth = maxZ - minZ
         lastAutoAreaM2 = area
         lastAutoPolygonWorld = planeWorldPoints(plane)
+        distanceText.visibility = View.VISIBLE
+        scanNowButton.visibility = View.GONE
+        segmentText.visibility = View.GONE
         distanceText.text = String.format(
             Locale.US,
             "%.2f m²\n%.1f ft²\n%.1f × %.1f ft",
@@ -1014,8 +1181,12 @@ class MainActivity : AppCompatActivity() {
         val totalInches = meters * 39.3700787f
         val feet = (totalInches / 12f).toInt()
         val inches = totalInches - feet * 12f
-        statusText.text = measureMode.label + " measured • Tap Reset for a new measurement."
+        statusText.text = measureMode.label + " measured • Tap Scan Now for a new measurement."
+        distanceText.visibility = View.VISIBLE
+        scanNowButton.visibility = View.GONE
         distanceText.text = String.format(Locale.US, "%.2f m\n%.1f cm\n%d ft %.1f in", meters, centimeters, feet, inches)
+        segmentText.visibility = View.VISIBLE
+        segmentText.text = String.format(Locale.US, "A ↔ B  %.2f m  •  %.1f cm  •  %d ft %.1f in", meters, centimeters, feet, inches)
     }
 
     private fun resetMeasurement() {
@@ -1030,10 +1201,19 @@ class MainActivity : AppCompatActivity() {
         lastAutoAreaUpdateMs = 0L
         lastAutoPolygonWorld = emptyList()
         lastAutoAreaM2 = 0f
+        editableAreaWorld.clear()
+        editableAreaScreen.clear()
+        editingAutoArea = false
+        editTool = EditTool.NONE
         measurementOverlay.clear()
         findViewById<Button>(R.id.finishAreaButton)?.visibility = View.GONE
-        distanceText.text = "—"
-        if (::statusText.isInitialized) statusText.text = measureMode.label + " mode • Tap the first point."
+        findViewById<View>(R.id.areaTools)?.visibility = if (
+            measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA || measureMode == MeasureMode.KITCHEN_TOP
+        ) View.VISIBLE else View.GONE
+        scanNowButton.visibility = View.VISIBLE
+        distanceText.visibility = View.GONE
+        segmentText.visibility = View.GONE
+        if (::statusText.isInitialized) statusText.text = measureMode.label + " mode • Tap Scan Now or the first point."
     }
 
     private fun currentProject(): LocalProject? =
