@@ -353,7 +353,7 @@ class MainActivity : AppCompatActivity() {
     private fun startAr() {
         if (arStarted || !hasCameraPermission()) return
         arStarted = true
-        statusText.text = "Floor mode • Move slowly until the floor is detected."
+        statusText.text = "Floor mode • Move slowly to scan the floor surface."
         arSceneView.lifecycle = lifecycle
 
         arSceneView.configureSession { session, config ->
@@ -718,23 +718,102 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateFloorBoundary(frame: Frame) {
         val plane = findBestFloorPlane(frame)
-        if (plane == null) {
-            measurementOverlay.clearAutoFloorOutline()
+        val now = SystemClock.elapsedRealtime()
+
+        if (plane != null) {
+            val points = projectPlanePolygon(frame, plane)
+            if (points.size >= 3) measurementOverlay.setAutoFloorOutline(points)
+            if ((measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA) &&
+                now - lastAutoAreaUpdateMs > 500L
+            ) {
+                lastAutoAreaUpdateMs = now
+                updateAutoPlaneMeasurement(plane)
+            }
             return
         }
 
-        val points = projectPlanePolygon(frame, plane)
-        if (points.size >= 3) {
-            measurementOverlay.setAutoFloorOutline(points)
+        // Depth fallback: ARCore can provide usable surface depth before it has
+        // committed a formal Plane. Sample a grid, keep the dominant horizontal
+        // surface, then build a world-space hull for the scan mask.
+        val depthSurface = findDepthFloorSurface(frame)
+        if (depthSurface.size >= 6) {
+            val screen = projectWorldPoints(frame, depthSurface)
+            if (screen.size >= 3) measurementOverlay.setAutoFloorOutline(screen)
+            if ((measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA) &&
+                now - lastAutoAreaUpdateMs > 500L
+            ) {
+                lastAutoAreaUpdateMs = now
+                updateAutoSurfaceMeasurement(depthSurface)
+            }
+        } else {
+            measurementOverlay.clearAutoFloorOutline()
         }
+    }
 
-        val now = SystemClock.elapsedRealtime()
-        if ((measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA) &&
-            now - lastAutoAreaUpdateMs > 500L
-        ) {
-            lastAutoAreaUpdateMs = now
-            updateAutoPlaneMeasurement(plane)
+    private fun findDepthFloorSurface(frame: Frame): List<LocalPoint> {
+        if (measurementOverlay.width <= 0 || measurementOverlay.height <= 0) return emptyList()
+        val samples = mutableListOf<LocalPoint>()
+        val cameraY = frame.camera.pose.ty()
+        for (iy in 0 until 8) {
+            val y = measurementOverlay.height * (0.34f + iy * 0.075f)
+            for (ix in 0 until 9) {
+                val x = measurementOverlay.width * (0.08f + ix * 0.105f)
+                val depthHit = frame.hitTest(x, y).firstOrNull {
+                    it.trackable is DepthPoint && it.trackable?.trackingState == TrackingState.TRACKING
+                }
+                val pose = depthHit?.hitPose ?: continue
+                if (pose.ty() < cameraY - 0.12f) samples.add(LocalPoint(pose.tx(), pose.ty(), pose.tz()))
+            }
         }
+        if (samples.size < 6) return emptyList()
+        val medianY = samples.map { it.y }.sorted()[samples.size / 2]
+        val floorSamples = samples.filter { abs(it.y - medianY) <= 0.09f }
+        if (floorSamples.size < 6) return emptyList()
+        return convexHullXZ(floorSamples)
+    }
+
+    private fun convexHullXZ(points: List<LocalPoint>): List<LocalPoint> {
+        if (points.size <= 2) return points.distinctBy { p -> p.x.toString() + "|" + p.z.toString() }
+        val sorted = points.distinctBy { p -> p.x.toString() + "|" + p.z.toString() }
+            .sortedWith(compareBy<LocalPoint> { it.x }.thenBy { it.z })
+        fun cross(o: LocalPoint, a: LocalPoint, b: LocalPoint): Float =
+            (a.x - o.x) * (b.z - o.z) - (a.z - o.z) * (b.x - o.x)
+        val lower = mutableListOf<LocalPoint>()
+        for (p in sorted) {
+            while (lower.size >= 2 && cross(lower[lower.size - 2], lower.last(), p) <= 0f) lower.removeAt(lower.lastIndex)
+            lower.add(p)
+        }
+        val upper = mutableListOf<LocalPoint>()
+        for (p in sorted.asReversed()) {
+            while (upper.size >= 2 && cross(upper[upper.size - 2], upper.last(), p) <= 0f) upper.removeAt(upper.lastIndex)
+            upper.add(p)
+        }
+        lower.removeAt(lower.lastIndex)
+        upper.removeAt(upper.lastIndex)
+        return lower + upper
+    }
+
+    private fun updateAutoSurfaceMeasurement(points: List<LocalPoint>) {
+        if (points.size < 3) return
+        val area = polygonArea(points)
+        if (area <= 0.01f) return
+        var minX = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE
+        var minZ = Float.MAX_VALUE
+        var maxZ = -Float.MAX_VALUE
+        points.forEach {
+            minX = min(minX, it.x); maxX = max(maxX, it.x)
+            minZ = min(minZ, it.z); maxZ = max(maxZ, it.z)
+        }
+        lastAutoAreaM2 = area
+        lastAutoPolygonWorld = points
+        distanceText.visibility = View.VISIBLE
+        scanNowButton.visibility = View.GONE
+        segmentText.visibility = View.GONE
+        distanceText.text = String.format(Locale.US,
+            "%.2f m²\\n%.1f ft²\\nL %.1f ft × W %.1f ft",
+            area, area * 10.7639104f, (maxX - minX) * 3.28084f, (maxZ - minZ) * 3.28084f)
+        statusText.text = "Floor surface scanned • Green mask shows detected coverage."
     }
 
     private fun scanNow() {
@@ -749,8 +828,8 @@ class MainActivity : AppCompatActivity() {
                     statusText.text = "Floor scan complete • Green outline is the detected floor area."
                     editTool = EditTool.NONE
                 } else {
-                    statusText.text = "Floor not locked yet • Aim at the floor and move slowly for 2–3 seconds."
-                    Toast.makeText(this, "ARCore has not locked a floor plane yet.", Toast.LENGTH_SHORT).show()
+                    statusText.text = "Scanning floor surface • Move slowly and cover the whole area for 3–5 seconds."
+                    Toast.makeText(this, "Keep the camera aimed at the floor and move slowly. Depth scanning will continue.", Toast.LENGTH_SHORT).show()
                 }
             }
             MeasureMode.KITCHEN_TOP -> {
@@ -1317,7 +1396,7 @@ class MainActivity : AppCompatActivity() {
         scanNowButton.visibility = View.VISIBLE
         distanceText.visibility = View.GONE
         segmentText.visibility = View.GONE
-        if (::statusText.isInitialized) statusText.text = measureMode.label + " mode • Tap Scan Now or the first point."
+        if (::statusText.isInitialized) statusText.text = if (measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA) "Move slowly to scan the surface • Tap Scan Now when coverage stabilizes." else measureMode.label + " mode • Tap Scan Now or the first point."
     }
 
     private fun currentProject(): LocalProject? =
