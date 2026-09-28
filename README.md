@@ -1,3 +1,3 @@
-# Simple AR Measure
+# ARmeasure
 
-Android AR distance measurement MVP.
+Professional Android AR measurement app for field measurements.
