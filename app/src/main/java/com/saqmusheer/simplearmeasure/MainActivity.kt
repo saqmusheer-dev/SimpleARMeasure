@@ -77,6 +77,9 @@ class MainActivity : AppCompatActivity() {
     private var lastAutoPolygonWorld = emptyList<LocalPoint>()
     private var lastAutoAreaM2 = 0f
     private var lastAutoAreaUpdateMs = 0L
+    private var lastFloorMaskUpdateMs = 0L
+    private val floorDepthSamples = mutableListOf<LocalPoint>()
+    private var floorScanActive = false
 
     private var latestFrame: Frame? = null
     private var arSession: Session? = null
@@ -392,16 +395,20 @@ class MainActivity : AppCompatActivity() {
                 maybeSegmentPerson(frame)
             }
 
-            if (firstAnchor == null && measureMode != MeasureMode.AREA && measureMode != MeasureMode.CUSTOM_AREA) {
-                statusText.text = when (measureMode) {
-                    MeasureMode.HEIGHT -> "Height mode • Stand clearly in view."
-                    else -> measureMode.label + " mode • Tap the first point."
-                }
-            } else if (secondAnchor == null && measureMode != MeasureMode.AREA && measureMode != MeasureMode.CUSTOM_AREA) {
-                statusText.text = if (measureMode == MeasureMode.HEIGHT) {
-                    "Point A = feet • Aim at the top of the head and tap."
-                } else {
-                    "Point A locked • Move to the second point and tap."
+            // Floor/area modes are scan-driven, not point-to-point. Do not overwrite
+            // the scan status every frame with the old "Tap the first point" message.
+            if (measureMode != MeasureMode.FLOOR && measureMode != MeasureMode.AREA && measureMode != MeasureMode.CUSTOM_AREA) {
+                if (firstAnchor == null) {
+                    statusText.text = when (measureMode) {
+                        MeasureMode.HEIGHT -> "Height mode • Stand clearly in view."
+                        else -> measureMode.label + " mode • Tap the first point."
+                    }
+                } else if (secondAnchor == null) {
+                    statusText.text = if (measureMode == MeasureMode.HEIGHT) {
+                        "Point A = feet • Aim at the top of the head and tap."
+                    } else {
+                        "Point A locked • Move to the second point and tap."
+                    }
                 }
             }
         }
@@ -703,8 +710,9 @@ class MainActivity : AppCompatActivity() {
             .filter {
                 it.trackingState == TrackingState.TRACKING &&
                     it.subsumedBy == null &&
-                    it.type == Plane.Type.HORIZONTAL_UPWARD_FACING &&
-                    it.centerPose.ty() < cameraY - 0.10f
+                    (it.type == Plane.Type.HORIZONTAL_UPWARD_FACING ||
+                        it.type == Plane.Type.HORIZONTAL_DOWNWARD_FACING) &&
+                    it.centerPose.ty() < cameraY - 0.08f
             }
             .forEach { if (!candidates.contains(it)) candidates.add(it) }
 
@@ -722,53 +730,87 @@ class MainActivity : AppCompatActivity() {
 
         if (plane != null) {
             val points = projectPlanePolygon(frame, plane)
-            if (points.size >= 3) measurementOverlay.setAutoFloorOutline(points)
-            if ((measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA) &&
-                now - lastAutoAreaUpdateMs > 500L
-            ) {
-                lastAutoAreaUpdateMs = now
-                updateAutoPlaneMeasurement(plane)
+            if (points.size >= 3) {
+                measurementOverlay.setAutoFloorOutline(points)
+                if (measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA) {
+                    updateAutoPlaneMeasurement(plane)
+                }
             }
             return
         }
 
-        // Depth fallback: ARCore can provide usable surface depth before it has
-        // committed a formal Plane. Sample a grid, keep the dominant horizontal
-        // surface, then build a world-space hull for the scan mask.
-        val depthSurface = findDepthFloorSurface(frame)
-        if (depthSurface.size >= 6) {
+        // Depth/feature fallback. Do not require one perfect frame: accumulate
+        // surface samples while the user moves the camera, then build a stable
+        // world-space hull from the dominant horizontal surface.
+        val depthSurface = collectFloorDepthSamples(frame)
+        if (depthSurface.size >= 4) {
             val screen = projectWorldPoints(frame, depthSurface)
             if (screen.size >= 3) measurementOverlay.setAutoFloorOutline(screen)
             if ((measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA) &&
-                now - lastAutoAreaUpdateMs > 500L
+                now - lastAutoAreaUpdateMs > 350L
             ) {
                 lastAutoAreaUpdateMs = now
                 updateAutoSurfaceMeasurement(depthSurface)
             }
-        } else {
-            measurementOverlay.clearAutoFloorOutline()
         }
+        // Never clear a previously detected mask just because one frame had no
+        // valid depth. The scan must remain visible while tracking catches up.
     }
 
-    private fun findDepthFloorSurface(frame: Frame): List<LocalPoint> {
+    private fun collectFloorDepthSamples(frame: Frame): List<LocalPoint> {
         if (measurementOverlay.width <= 0 || measurementOverlay.height <= 0) return emptyList()
-        val samples = mutableListOf<LocalPoint>()
+
         val cameraY = frame.camera.pose.ty()
-        for (iy in 0 until 8) {
-            val y = measurementOverlay.height * (0.34f + iy * 0.075f)
-            for (ix in 0 until 9) {
-                val x = measurementOverlay.width * (0.08f + ix * 0.105f)
-                val depthHit = frame.hitTest(x, y).firstOrNull {
-                    it.trackable is DepthPoint && it.trackable?.trackingState == TrackingState.TRACKING
+        val newSamples = mutableListOf<LocalPoint>()
+        val w = measurementOverlay.width.toFloat()
+        val h = measurementOverlay.height.toFloat()
+
+        // Bias the grid toward the lower part of the camera view, where the floor
+        // occupies most pixels in a normal room scan.
+        for (iy in 0 until 9) {
+            val y = h * (0.40f + iy * 0.065f)
+            for (ix in 0 until 11) {
+                val x = w * (0.06f + ix * 0.088f)
+                val hits = frame.hitTest(x, y)
+
+                val hit = hits.firstOrNull {
+                    it.trackable is DepthPoint &&
+                        it.trackable?.trackingState == TrackingState.TRACKING
+                } ?: hits.firstOrNull {
+                    it.trackable is com.google.ar.core.Point &&
+                        it.trackable?.trackingState == TrackingState.TRACKING
+                } ?: hits.firstOrNull {
+                    val p = it.trackable as? Plane
+                    p != null &&
+                        p.trackingState == TrackingState.TRACKING &&
+                        (p.type == Plane.Type.HORIZONTAL_UPWARD_FACING ||
+                            p.type == Plane.Type.HORIZONTAL_DOWNWARD_FACING)
                 }
-                val pose = depthHit?.hitPose ?: continue
-                if (pose.ty() < cameraY - 0.12f) samples.add(LocalPoint(pose.tx(), pose.ty(), pose.tz()))
+
+                val pose = hit?.hitPose ?: continue
+                if (pose.ty() < cameraY - 0.08f) {
+                    newSamples.add(LocalPoint(pose.tx(), pose.ty(), pose.tz()))
+                }
             }
         }
-        if (samples.size < 6) return emptyList()
-        val medianY = samples.map { it.y }.sorted()[samples.size / 2]
-        val floorSamples = samples.filter { abs(it.y - medianY) <= 0.09f }
-        if (floorSamples.size < 6) return emptyList()
+
+        if (newSamples.isNotEmpty()) {
+            floorDepthSamples.addAll(newSamples)
+            // Keep memory bounded while retaining enough spatial coverage.
+            if (floorDepthSamples.size > 1800) {
+                floorDepthSamples.subList(0, floorDepthSamples.size - 1800).clear()
+            }
+        }
+
+        if (floorDepthSamples.size < 4) return emptyList()
+
+        // The floor is the dominant near-horizontal depth layer. A median Y
+        // plus a generous tolerance handles small depth noise and carpet seams.
+        val sortedY = floorDepthSamples.map { it.y }.sorted()
+        val medianY = sortedY[sortedY.size / 2]
+        val floorSamples = floorDepthSamples.filter { abs(it.y - medianY) <= 0.12f }
+
+        if (floorSamples.size < 4) return emptyList()
         return convexHullXZ(floorSamples)
     }
 
@@ -825,11 +867,21 @@ class MainActivity : AppCompatActivity() {
                     updateAutoPlaneMeasurement(plane)
                     val points = projectPlanePolygon(frame!!, plane)
                     if (points.size >= 3) measurementOverlay.setAutoFloorOutline(points)
-                    statusText.text = "Floor scan complete • Green outline is the detected floor area."
+                    floorScanActive = true
+                    statusText.text = "Floor scan complete • Green mask shows the detected surface."
                     editTool = EditTool.NONE
                 } else {
-                    statusText.text = "Scanning floor surface • Move slowly and cover the whole area for 3–5 seconds."
-                    Toast.makeText(this, "Keep the camera aimed at the floor and move slowly. Depth scanning will continue.", Toast.LENGTH_SHORT).show()
+                    floorScanActive = true
+                    val surface = frame?.let { collectFloorDepthSamples(it) } ?: emptyList()
+                    if (surface.size >= 3) {
+                        val screen = frame?.let { projectWorldPoints(it, surface) } ?: emptyList()
+                        if (screen.size >= 3) measurementOverlay.setAutoFloorOutline(screen)
+                        updateAutoSurfaceMeasurement(surface)
+                        statusText.text = "Floor surface detected • Keep moving to expand the green mask."
+                    } else {
+                        statusText.text = "Scanning floor surface • Move slowly across the floor."
+                    }
+                    Toast.makeText(this, "Scanning the floor… keep the camera low and move slowly.", Toast.LENGTH_SHORT).show()
                 }
             }
             MeasureMode.KITCHEN_TOP -> {
@@ -1407,6 +1459,9 @@ class MainActivity : AppCompatActivity() {
         personMeasured = false
         kitchenTopPlane = null
         lastAutoAreaUpdateMs = 0L
+        lastFloorMaskUpdateMs = 0L
+        floorDepthSamples.clear()
+        floorScanActive = false
         lastAutoPolygonWorld = emptyList()
         lastAutoAreaM2 = 0f
         editableAreaWorld.clear()
