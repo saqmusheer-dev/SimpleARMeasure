@@ -46,8 +46,11 @@ import io.github.sceneview.ar.ARSceneView
 import java.nio.FloatBuffer
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
 import kotlin.math.sqrt
 
 class MainActivity : AppCompatActivity() {
@@ -81,6 +84,7 @@ class MainActivity : AppCompatActivity() {
     private var lastAutoAreaUpdateMs = 0L
     private var lastFloorMaskUpdateMs = 0L
     private val floorDepthSamples = mutableListOf<LocalPoint>()
+    private val floorScanSamples = mutableListOf<LocalPoint>()
     private var floorScanActive = false
 
     private var latestFrame: Frame? = null
@@ -658,8 +662,15 @@ class MainActivity : AppCompatActivity() {
         if (topHit != null && bottomHit != null) {
             val topPose = topHit.hitPose
             val bottomPose = bottomHit.hitPose
-            val height = abs(topPose.ty() - bottomPose.ty())
-            if (height in 0.7f..2.8f) {
+            val vertical = abs(topPose.ty() - bottomPose.ty())
+            val horizontalDrift = sqrt(
+                (topPose.tx() - bottomPose.tx()) * (topPose.tx() - bottomPose.tx()) +
+                    (topPose.tz() - bottomPose.tz()) * (topPose.tz() - bottomPose.tz())
+            )
+            // Reject obvious background/floor hits. A real person's head and
+            // feet should be nearly vertically aligned in world space.
+            val height = vertical
+            if (height in 0.7f..2.8f && horizontalDrift < 0.65f) {
                 firstAnchor?.detach()
                 secondAnchor?.detach()
                 firstAnchor = createAnchorSafely(bottomHit)
@@ -681,17 +692,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun findDepthHit(frame: Frame, x: Float, y: Float): HitResult? {
-        val offsets = floatArrayOf(0f, -18f, 18f, -32f, 32f)
+        val offsets = floatArrayOf(0f, -12f, 12f, -24f, 24f, -36f, 36f)
+        // For person height, do not fall back to a wall/floor plane: that can
+        // turn the head point into the wall behind the person. Use real depth
+        // hits only, with a small neighborhood for temporal robustness.
         return offsets.asSequence()
             .flatMap { ox -> offsets.asSequence().map { oy -> frame.hitTest(x + ox, y + oy) } }
             .flatten()
             .firstOrNull {
                 it.trackable?.trackingState == TrackingState.TRACKING &&
                     it.trackable is DepthPoint
-            }
-            ?: frame.hitTest(x, y).firstOrNull {
-                it.trackable?.trackingState == TrackingState.TRACKING &&
-                    it.trackable is Plane
             }
     }
 
@@ -719,20 +729,34 @@ class MainActivity : AppCompatActivity() {
         val session = arSession ?: return null
         val cameraY = frame.camera.pose.ty()
 
-        // Sample several screen locations so the center of the screen is not a
-        // single point of failure when the camera is tilted or the floor is partial.
+        // Prefer the floor actually under the current camera view. The previous
+        // implementation selected the globally largest tracked plane, which can
+        // jump to a distant/merged floor and produce impossible room dimensions.
+        val centerX = measurementOverlay.width * 0.50f
+        val centerY = measurementOverlay.height * 0.68f
+        val preferred = frame.hitTest(centerX, centerY)
+            .asSequence()
+            .mapNotNull { it.trackable as? Plane }
+            .firstOrNull {
+                it.trackingState == TrackingState.TRACKING &&
+                    it.subsumedBy == null &&
+                    it.type == Plane.Type.HORIZONTAL_UPWARD_FACING &&
+                    it.centerPose.ty() < cameraY - 0.08f
+            }
+        if (preferred != null) return preferred
+
+        val candidates = mutableListOf<Plane>()
         val xs = floatArrayOf(
             measurementOverlay.width * 0.25f,
             measurementOverlay.width * 0.50f,
             measurementOverlay.width * 0.75f
         )
         val ys = floatArrayOf(
-            measurementOverlay.height * 0.42f,
-            measurementOverlay.height * 0.58f,
-            measurementOverlay.height * 0.74f,
-            measurementOverlay.height * 0.88f
+            measurementOverlay.height * 0.52f,
+            measurementOverlay.height * 0.68f,
+            measurementOverlay.height * 0.82f,
+            measurementOverlay.height * 0.92f
         )
-        val candidates = mutableListOf<Plane>()
         for (x in xs) {
             for (y in ys) {
                 frame.hitTest(x, y).forEach { hit ->
@@ -741,64 +765,73 @@ class MainActivity : AppCompatActivity() {
                         plane.trackingState == TrackingState.TRACKING &&
                         plane.subsumedBy == null &&
                         plane.type == Plane.Type.HORIZONTAL_UPWARD_FACING &&
-                        plane.centerPose.ty() < cameraY - 0.10f
-                    ) {
-                        if (!candidates.contains(plane)) candidates.add(plane)
-                    }
+                        plane.centerPose.ty() < cameraY - 0.08f &&
+                        !candidates.contains(plane)
+                    ) candidates.add(plane)
                 }
             }
         }
 
-        // Also consider every currently tracked horizontal plane below the camera.
-        session.getAllTrackables(Plane::class.java)
+        if (candidates.isNotEmpty()) {
+            return candidates.maxByOrNull { it.extentX * it.extentZ }
+        }
+
+        return session.getAllTrackables(Plane::class.java)
             .filter {
                 it.trackingState == TrackingState.TRACKING &&
                     it.subsumedBy == null &&
-                    (it.type == Plane.Type.HORIZONTAL_UPWARD_FACING ||
-                        it.type == Plane.Type.HORIZONTAL_DOWNWARD_FACING) &&
+                    it.type == Plane.Type.HORIZONTAL_UPWARD_FACING &&
                     it.centerPose.ty() < cameraY - 0.08f
             }
-            .forEach { if (!candidates.contains(it)) candidates.add(it) }
-
-        return candidates.maxByOrNull { plane ->
-            val polygon = plane.polygon
-            val pointCount = polygon.remaining()
-            val extent = plane.extentX * plane.extentZ
-            extent * (if (pointCount >= 6) 1.25f else 1f)
-        }
+            .maxByOrNull { it.extentX * it.extentZ }
     }
 
     private fun updateFloorBoundary(frame: Frame) {
-        val plane = findBestFloorPlane(frame)
         val now = SystemClock.elapsedRealtime()
+        val plane = findBestFloorPlane(frame)
 
         if (plane != null) {
-            val points = projectPlanePolygon(frame, plane)
-            if (points.size >= 3) {
-                measurementOverlay.setAutoFloorOutline(points)
-                if (measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA) {
-                    updateAutoPlaneMeasurement(plane)
-                }
+            accumulateFloorPlane(plane)
+            val surface = floorScanSamples.takeIf { it.size >= 4 } ?: planeWorldPoints(plane)
+            val screen = projectWorldPoints(frame, surface)
+            if (screen.size >= 3) measurementOverlay.setAutoFloorOutline(screen)
+
+            if ((measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA) &&
+                now - lastAutoAreaUpdateMs > 300L
+            ) {
+                lastAutoAreaUpdateMs = now
+                updateAutoSurfaceMeasurement(surface)
             }
             return
         }
 
-        // Depth/feature fallback. Do not require one perfect frame: accumulate
-        // surface samples while the user moves the camera, then build a stable
-        // world-space hull from the dominant horizontal surface.
         val depthSurface = collectFloorDepthSamples(frame)
         if (depthSurface.size >= 4) {
-            val screen = projectWorldPoints(frame, depthSurface)
+            floorScanSamples.addAll(depthSurface)
+            trimFloorScanSamples()
+            val stable = convexHullXZ(floorScanSamples)
+            val screen = projectWorldPoints(frame, stable)
             if (screen.size >= 3) measurementOverlay.setAutoFloorOutline(screen)
             if ((measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA) &&
-                now - lastAutoAreaUpdateMs > 350L
+                now - lastAutoAreaUpdateMs > 300L
             ) {
                 lastAutoAreaUpdateMs = now
-                updateAutoSurfaceMeasurement(depthSurface)
+                updateAutoSurfaceMeasurement(stable)
             }
         }
-        // Never clear a previously detected mask just because one frame had no
-        // valid depth. The scan must remain visible while tracking catches up.
+    }
+
+    private fun accumulateFloorPlane(plane: Plane) {
+        val points = planeWorldPoints(plane)
+        if (points.size < 3) return
+        floorScanSamples.addAll(points.filterIndexed { index, _ -> index % 2 == 0 })
+        trimFloorScanSamples()
+    }
+
+    private fun trimFloorScanSamples() {
+        if (floorScanSamples.size > 2400) {
+            floorScanSamples.subList(0, floorScanSamples.size - 2400).clear()
+        }
     }
 
     private fun collectFloorDepthSamples(frame: Frame): List<LocalPoint> {
@@ -881,30 +914,73 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateAutoSurfaceMeasurement(points: List<LocalPoint>) {
         if (points.size < 3) return
-        val area = polygonArea(points)
+        val hull = convexHullXZ(points)
+        if (hull.size < 3) return
+        val area = polygonArea(hull)
         if (area <= 0.01f) return
-        var minX = Float.MAX_VALUE
-        var maxX = -Float.MAX_VALUE
-        var minZ = Float.MAX_VALUE
-        var maxZ = -Float.MAX_VALUE
-        points.forEach {
-            minX = min(minX, it.x); maxX = max(maxX, it.x)
-            minZ = min(minZ, it.z); maxZ = max(maxZ, it.z)
-        }
+
+        val dimensions = principalDimensions(hull)
         lastAutoAreaM2 = area
-        lastAutoPolygonWorld = points
+        lastAutoPolygonWorld = hull
         distanceText.visibility = View.VISIBLE
         scanNowButton.visibility = View.GONE
         segmentText.visibility = View.GONE
-        distanceText.text = String.format(Locale.US,
+        distanceText.text = String.format(
+            Locale.US,
             "%.2f m²\\n%.1f ft²\\nL %.1f ft × W %.1f ft",
-            area, area * 10.7639104f, (maxX - minX) * 3.28084f, (maxZ - minZ) * 3.28084f)
-        statusText.text = "Floor surface scanned • Green mask shows detected coverage."
+            area,
+            area * 10.7639104f,
+            dimensions.first * 3.28084f,
+            dimensions.second * 3.28084f
+        )
+        statusText.text = "Floor scan accumulating • Move slowly to cover the full floor."
+    }
+
+    private fun principalDimensions(points: List<LocalPoint>): Pair<Float, Float> {
+        if (points.size < 2) return 0f to 0f
+        var meanX = 0f
+        var meanZ = 0f
+        points.forEach { meanX += it.x; meanZ += it.z }
+        meanX /= points.size
+        meanZ /= points.size
+
+        var xx = 0f
+        var zz = 0f
+        var xz = 0f
+        points.forEach {
+            val dx = it.x - meanX
+            val dz = it.z - meanZ
+            xx += dx * dx
+            zz += dz * dz
+            xz += dx * dz
+        }
+        val angle = 0.5f * atan2(2f * xz, xx - zz)
+        val c = cos(angle)
+        val s = sin(angle)
+        var minA = Float.MAX_VALUE
+        var maxA = -Float.MAX_VALUE
+        var minB = Float.MAX_VALUE
+        var maxB = -Float.MAX_VALUE
+        points.forEach {
+            val dx = it.x - meanX
+            val dz = it.z - meanZ
+            val a = dx * c + dz * s
+            val b = -dx * s + dz * c
+            minA = min(minA, a); maxA = max(maxA, a)
+            minB = min(minB, b); maxB = max(maxB, b)
+        }
+        return (maxA - minA) to (maxB - minB)
     }
 
     private fun scanNow() {
         when (measureMode) {
             MeasureMode.FLOOR, MeasureMode.AREA, MeasureMode.CUSTOM_AREA -> {
+                if (!floorScanActive) {
+                    floorScanSamples.clear()
+                    floorDepthSamples.clear()
+                    lastAutoPolygonWorld = emptyList()
+                    lastAutoAreaM2 = 0f
+                }
                 floorScanActive = true
                 val frame = latestFrame
                 val plane = frame?.let { findBestFloorPlane(it) }
@@ -1504,6 +1580,7 @@ class MainActivity : AppCompatActivity() {
         lastAutoAreaUpdateMs = 0L
         lastFloorMaskUpdateMs = 0L
         floorDepthSamples.clear()
+        floorScanSamples.clear()
         floorScanActive = false
         findViewById<View>(R.id.engineerMenu)?.visibility = View.GONE
         findViewById<View>(R.id.interiorMenu)?.visibility = View.GONE
