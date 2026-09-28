@@ -196,6 +196,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.directButton).setOnClickListener { selectMode(MeasureMode.DIRECT) }
         findViewById<Button>(R.id.areaButton).setOnClickListener { selectMode(MeasureMode.AREA) }
         findViewById<Button>(R.id.customAreaButton).setOnClickListener { selectMode(MeasureMode.CUSTOM_AREA) }
+        findViewById<Button>(R.id.scanEngineerButton).setOnClickListener { scanNow() }
         findViewById<Button>(R.id.finishAreaButton).setOnClickListener { finishArea() }
         findViewById<Button>(R.id.scanNowButton).setOnClickListener { scanNow() }
         findViewById<Button>(R.id.editMenuButton).setOnClickListener {
@@ -267,10 +268,19 @@ class MainActivity : AppCompatActivity() {
 
     private fun showWorkspaceMenu(menuId: Int) {
         val ids = intArrayOf(R.id.engineerMenu, R.id.interiorMenu, R.id.kitchenMenu, R.id.objectMenu)
+        val target = findViewById<View>(menuId)
+        val opening = target.visibility != View.VISIBLE
+
         ids.forEach { id ->
             val view = findViewById<View>(id)
-            view.visibility = if (id == menuId && view.visibility != View.VISIBLE) View.VISIBLE else View.GONE
+            view.visibility = if (id == menuId && opening) View.VISIBLE else View.GONE
+            if (id == menuId && opening) view.bringToFront()
         }
+
+        // Keep the workspace menu clean: measurement actions belong to the
+        // contextual result area and should never sit underneath the menu.
+        findViewById<View>(R.id.resultActions)?.visibility =
+            if (opening) View.GONE else View.VISIBLE
     }
 
     private fun ensureCameraPermission() {
