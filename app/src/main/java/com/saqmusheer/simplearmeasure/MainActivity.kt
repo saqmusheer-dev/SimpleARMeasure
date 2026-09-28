@@ -18,6 +18,8 @@ import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ImageView
+import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
@@ -104,6 +106,7 @@ class MainActivity : AppCompatActivity() {
     private var lastSegmentationMs = 0L
     private var personMeasured = false
     private var kitchenTopPlane: Plane? = null
+    private var kitchenShapePreset = ""
 
     private val cameraPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -204,24 +207,47 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.undoAreaButton).setOnClickListener { undoAreaEdit() }
         findViewById<Button>(R.id.doneAreaButton).setOnClickListener { finishAreaEdit() }
         findViewById<Button>(R.id.resetButton).setOnClickListener { resetMeasurement() }
-        findViewById<Button>(R.id.settingsButton).setOnClickListener { showSettings() }
         findViewById<Button>(R.id.projectsButton).setOnClickListener { showProjects() }
         findViewById<Button>(R.id.saveButton).setOnClickListener { saveCurrentMeasurement() }
-        findViewById<Button>(R.id.modeMenuButton).setOnClickListener {
-            val menu = findViewById<View>(R.id.modeMenu)
-            menu.visibility = if (menu.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+
+        findViewById<Button>(R.id.engineerButton).setOnClickListener { showWorkspaceMenu(R.id.engineerMenu) }
+        findViewById<Button>(R.id.interiorButton).setOnClickListener { showWorkspaceMenu(R.id.interiorMenu) }
+        findViewById<Button>(R.id.kitchenButton).setOnClickListener { showWorkspaceMenu(R.id.kitchenMenu) }
+        findViewById<Button>(R.id.objectsButton).setOnClickListener { showWorkspaceMenu(R.id.objectMenu) }
+        findViewById<Button>(R.id.settingsBottomButton).setOnClickListener { showSettings() }
+
+        findViewById<Button>(R.id.roomDesignButton).setOnClickListener {
+            Toast.makeText(this, "Interior Design workspace • Room design tools are next.", Toast.LENGTH_SHORT).show()
         }
-        findViewById<Button>(R.id.editToolbarButton).setOnClickListener {
-            val edit = findViewById<View>(R.id.areaTools)
-            val editMenu = findViewById<Button>(R.id.editMenuButton)
-            if (editMenu.visibility == View.VISIBLE) {
-                edit.visibility = if (edit.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-            } else {
-                Toast.makeText(this, "Finish or scan a surface before editing.", Toast.LENGTH_SHORT).show()
-            }
+        findViewById<Button>(R.id.furnitureButton).setOnClickListener {
+            Toast.makeText(this, "Furniture placement workspace • Coming after the scan engine.", Toast.LENGTH_SHORT).show()
         }
-        findViewById<Button>(R.id.projectsToolbarButton).setOnClickListener { showProjects() }
-        findViewById<Button>(R.id.settingsToolbarButton).setOnClickListener { showSettings() }
+        findViewById<Button>(R.id.wallDesignButton).setOnClickListener {
+            Toast.makeText(this, "Wall Design • Scan a wall first, then design tools will use its measured surface.", Toast.LENGTH_SHORT).show()
+        }
+        findViewById<Button>(R.id.kitchenLShapeButton).setOnClickListener {
+            kitchenShapePreset = "L-Shape"
+            selectMode(MeasureMode.CUSTOM_AREA)
+            statusText.text = "Kitchen L-Shape • Tap each corner, then Finish."
+        }
+        findViewById<Button>(R.id.kitchenUShapeButton).setOnClickListener {
+            kitchenShapePreset = "U-Shape"
+            selectMode(MeasureMode.CUSTOM_AREA)
+            statusText.text = "Kitchen U-Shape • Tap each corner, then Finish."
+        }
+        findViewById<Button>(R.id.objectScanButton).setOnClickListener {
+            Toast.makeText(this, "Object Scan • Aim at the object and use SCAN NOW. Recognition engine is the next Phase 2 step.", Toast.LENGTH_LONG).show()
+            statusText.text = "Object Scan • Aim at an object and tap SCAN NOW."
+        }
+        findViewById<Button>(R.id.doorObjectButton).setOnClickListener {
+            Toast.makeText(this, "Door detection uses the upcoming object engine.", Toast.LENGTH_SHORT).show()
+        }
+        findViewById<Button>(R.id.windowObjectButton).setOnClickListener {
+            Toast.makeText(this, "Window detection uses the upcoming object engine.", Toast.LENGTH_SHORT).show()
+        }
+        findViewById<Button>(R.id.furnitureObjectButton).setOnClickListener {
+            Toast.makeText(this, "Furniture detection uses the upcoming object engine.", Toast.LENGTH_SHORT).show()
+        }
 
         measurementOverlay.setOnTouchListener { _, event ->
             if (event.action == MotionEvent.ACTION_UP) {
@@ -237,6 +263,14 @@ class MainActivity : AppCompatActivity() {
         // Android does not display runtime permissions during APK installation.
         // We request CAMERA immediately on the first launch before starting AR.
         ensureCameraPermission()
+    }
+
+    private fun showWorkspaceMenu(menuId: Int) {
+        val ids = intArrayOf(R.id.engineerMenu, R.id.interiorMenu, R.id.kitchenMenu, R.id.objectMenu)
+        ids.forEach { id ->
+            val view = findViewById<View>(id)
+            view.visibility = if (id == menuId && view.visibility != View.VISIBLE) View.VISIBLE else View.GONE
+        }
     }
 
     private fun ensureCameraPermission() {
@@ -381,7 +415,7 @@ class MainActivity : AppCompatActivity() {
         arSceneView.onSessionUpdated = { _, frame ->
             latestFrame = frame
 
-            if (autoFloorOutline && (measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA)) {
+            if (autoFloorOutline && floorScanActive && (measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA)) {
                 updateFloorBoundary(frame)
             } else if (measureMode == MeasureMode.KITCHEN_TOP && kitchenTopPlane != null) {
                 updateKitchenTopBoundary(frame, kitchenTopPlane!!)
@@ -861,6 +895,7 @@ class MainActivity : AppCompatActivity() {
     private fun scanNow() {
         when (measureMode) {
             MeasureMode.FLOOR, MeasureMode.AREA, MeasureMode.CUSTOM_AREA -> {
+                floorScanActive = true
                 val frame = latestFrame
                 val plane = frame?.let { findBestFloorPlane(it) }
                 if (plane != null) {
@@ -1068,15 +1103,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun selectMode(mode: MeasureMode) {
         measureMode = mode
+        if (mode != MeasureMode.CUSTOM_AREA) kitchenShapePreset = ""
         modeText.text = mode.label.uppercase(Locale.US) + " MODE"
-        findViewById<Button>(R.id.floorButton).alpha = if (mode == MeasureMode.FLOOR) 1f else 0.60f
-        findViewById<Button>(R.id.kitchenTopButton).alpha = if (mode == MeasureMode.KITCHEN_TOP) 1f else 0.60f
-        findViewById<Button>(R.id.heightButton).alpha = if (mode == MeasureMode.HEIGHT) 1f else 0.60f
-        findViewById<Button>(R.id.directButton).alpha = if (mode == MeasureMode.DIRECT) 1f else 0.60f
-        findViewById<Button>(R.id.areaButton).alpha = if (mode == MeasureMode.AREA) 1f else 0.60f
-        findViewById<Button>(R.id.customAreaButton).alpha = if (mode == MeasureMode.CUSTOM_AREA) 1f else 0.60f
+        findViewById<View>(R.id.engineerMenu).visibility = View.GONE
+        findViewById<View>(R.id.interiorMenu).visibility = View.GONE
+        findViewById<View>(R.id.kitchenMenu).visibility = View.GONE
+        findViewById<View>(R.id.objectMenu).visibility = View.GONE
         findViewById<View>(R.id.areaTools).visibility = View.GONE
-        findViewById<View>(R.id.modeMenu).visibility = View.GONE
         findViewById<Button>(R.id.editMenuButton).visibility =
             if (mode == MeasureMode.FLOOR || mode == MeasureMode.AREA || mode == MeasureMode.CUSTOM_AREA || mode == MeasureMode.KITCHEN_TOP) View.VISIBLE else View.GONE
         resetMeasurement()
@@ -1462,6 +1495,12 @@ class MainActivity : AppCompatActivity() {
         lastFloorMaskUpdateMs = 0L
         floorDepthSamples.clear()
         floorScanActive = false
+        findViewById<View>(R.id.engineerMenu)?.visibility = View.GONE
+        findViewById<View>(R.id.interiorMenu)?.visibility = View.GONE
+        findViewById<View>(R.id.kitchenMenu)?.visibility = View.GONE
+        findViewById<View>(R.id.objectMenu)?.visibility = View.GONE
+        findViewById<View>(R.id.areaTools)?.visibility = View.GONE
+        measurementOverlay.clearAutoFloorOutline()
         lastAutoPolygonWorld = emptyList()
         lastAutoAreaM2 = 0f
         editableAreaWorld.clear()
@@ -1477,7 +1516,11 @@ class MainActivity : AppCompatActivity() {
         scanNowButton.visibility = View.VISIBLE
         distanceText.visibility = View.GONE
         segmentText.visibility = View.GONE
-        if (::statusText.isInitialized) statusText.text = if (measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA) "Move slowly to scan the surface • Tap Scan Now when coverage stabilizes." else measureMode.label + " mode • Tap Scan Now or the first point."
+        if (::statusText.isInitialized) statusText.text = when (measureMode) {
+            MeasureMode.FLOOR, MeasureMode.AREA, MeasureMode.CUSTOM_AREA -> "Ready • Open Engineer to choose a surface, then Scan."
+            MeasureMode.KITCHEN_TOP -> "Kitchen Top • Open Kitchen and choose a tool."
+            else -> measureMode.label + " mode • Ready for a new measurement."
+        }
     }
 
     private fun currentProject(): LocalProject? =
@@ -1515,7 +1558,7 @@ class MainActivity : AppCompatActivity() {
                     currentProjectId = project.id
                     getSharedPreferences("local_projects_ui", MODE_PRIVATE).edit().putString("current_project_id", project.id).apply()
                     updateProjectStatus()
-                    Toast.makeText(this@MainActivity, "Project selected: ${project.name}", Toast.LENGTH_SHORT).show()
+                    showProjectDetails(project)
                 }
             }
             box.addView(button)
@@ -1548,6 +1591,66 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("Local Projects")
             .setView(box)
+            .setPositiveButton("DONE", null)
+            .show()
+    }
+
+    private fun showProjectDetails(project: LocalProject) {
+        val scroll = ScrollView(this)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(12, 4, 12, 12)
+        }
+
+        box.addView(TextView(this).apply {
+            text = project.name + "\n" + project.measurements.size + " measurements • " + project.photos.size + " photos"
+            textSize = 17f
+            setTextColor(0xFF222222.toInt())
+            setPadding(4, 8, 4, 14)
+        })
+
+        if (project.measurements.isNotEmpty()) {
+            box.addView(TextView(this).apply {
+                text = "MEASUREMENTS"
+                textSize = 12f
+                setTypeface(null, android.graphics.Typeface.BOLD)
+                setPadding(4, 8, 4, 6)
+            })
+            project.measurements.asReversed().forEach { measurement ->
+                box.addView(TextView(this).apply {
+                    text = "• " + measurement.title + " — " + measurement.mode + "\n" + measurement.summary
+                    textSize = 14f
+                    setTextColor(0xFF333333.toInt())
+                    setPadding(8, 8, 8, 8)
+                    setBackgroundColor(0xFFF2F2F2.toInt())
+                })
+            }
+        }
+
+        if (project.photos.isNotEmpty()) {
+            box.addView(TextView(this).apply {
+                text = "SITE PHOTOS"
+                textSize = 12f
+                setTypeface(null, android.graphics.Typeface.BOLD)
+                setPadding(4, 16, 4, 6)
+            })
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            project.photos.forEach { uriString ->
+                row.addView(ImageView(this).apply {
+                    layoutParams = LinearLayout.LayoutParams(112, 112).apply {
+                        setMargins(4, 4, 4, 4)
+                    }
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    try { setImageURI(android.net.Uri.parse(uriString)) } catch (_: Exception) { }
+                })
+            }
+            box.addView(row)
+        }
+
+        scroll.addView(box)
+        AlertDialog.Builder(this)
+            .setTitle("Project")
+            .setView(scroll)
             .setPositiveButton("DONE", null)
             .show()
     }
