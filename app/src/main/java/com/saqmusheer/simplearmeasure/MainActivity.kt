@@ -192,6 +192,10 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.customAreaButton).setOnClickListener { selectMode(MeasureMode.CUSTOM_AREA) }
         findViewById<Button>(R.id.finishAreaButton).setOnClickListener { finishArea() }
         findViewById<Button>(R.id.scanNowButton).setOnClickListener { scanNow() }
+        findViewById<Button>(R.id.editMenuButton).setOnClickListener {
+            val tools = findViewById<View>(R.id.areaTools)
+            tools.visibility = if (tools.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        }
         findViewById<Button>(R.id.penButton).setOnClickListener { setEditTool(EditTool.PEN) }
         findViewById<Button>(R.id.eraserButton).setOnClickListener { setEditTool(EditTool.ERASER) }
         findViewById<Button>(R.id.undoAreaButton).setOnClickListener { undoAreaEdit() }
@@ -645,59 +649,105 @@ class MainActivity : AppCompatActivity() {
         return best
     }
 
-    private fun updateFloorBoundary(frame: Frame) {
-        val session = arSession ?: run {
-            measurementOverlay.clearAutoFloorOutline()
-            return
+    private fun findBestFloorPlane(frame: Frame): Plane? {
+        val session = arSession ?: return null
+        val cameraY = frame.camera.pose.ty()
+
+        // Sample several screen locations so the center of the screen is not a
+        // single point of failure when the camera is tilted or the floor is partial.
+        val xs = floatArrayOf(
+            measurementOverlay.width * 0.25f,
+            measurementOverlay.width * 0.50f,
+            measurementOverlay.width * 0.75f
+        )
+        val ys = floatArrayOf(
+            measurementOverlay.height * 0.42f,
+            measurementOverlay.height * 0.58f,
+            measurementOverlay.height * 0.74f,
+            measurementOverlay.height * 0.88f
+        )
+        val candidates = linkedMapOf<String, Plane>()
+        for (x in xs) {
+            for (y in ys) {
+                frame.hitTest(x, y).forEach { hit ->
+                    val plane = hit.trackable as? Plane
+                    if (plane != null &&
+                        plane.trackingState == TrackingState.TRACKING &&
+                        plane.subsumedBy == null &&
+                        plane.type == Plane.Type.HORIZONTAL_UPWARD_FACING &&
+                        plane.centerPose.ty() < cameraY - 0.10f
+                    ) {
+                        candidates[plane.trackableId.toString()] = plane
+                    }
+                }
+            }
         }
-        val centerX = measurementOverlay.width / 2f
-        val centerY = measurementOverlay.height / 2f
-        val targetPlane = frame.hitTest(centerX, centerY).asSequence()
-            .mapNotNull { it.trackable as? Plane }
-            .firstOrNull {
+
+        // Also consider every currently tracked horizontal plane below the camera.
+        session.getAllTrackables(Plane::class.java)
+            .filter {
                 it.trackingState == TrackingState.TRACKING &&
                     it.subsumedBy == null &&
-                    it.type == Plane.Type.HORIZONTAL_UPWARD_FACING
+                    it.type == Plane.Type.HORIZONTAL_UPWARD_FACING &&
+                    it.centerPose.ty() < cameraY - 0.10f
             }
-        val plane = targetPlane
+            .forEach { candidates[it.trackableId.toString()] = it }
+
+        return candidates.values.maxByOrNull { plane ->
+            val polygon = plane.polygon
+            val pointCount = polygon.remaining()
+            val extent = plane.extentX * plane.extentZ
+            extent * (if (pointCount >= 6) 1.25f else 1f)
+        }
+    }
+
+    private fun updateFloorBoundary(frame: Frame) {
+        val plane = findBestFloorPlane(frame)
         if (plane == null) {
             measurementOverlay.clearAutoFloorOutline()
             return
         }
+
         val points = projectPlanePolygon(frame, plane)
-        if (points.size >= 3) measurementOverlay.setAutoFloorOutline(points)
+        if (points.size >= 3) {
+            measurementOverlay.setAutoFloorOutline(points)
+        }
+
         val now = SystemClock.elapsedRealtime()
         if ((measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA) &&
-            now - lastAutoAreaUpdateMs > 500L) {
+            now - lastAutoAreaUpdateMs > 500L
+        ) {
             lastAutoAreaUpdateMs = now
             updateAutoPlaneMeasurement(plane)
         }
     }
 
     private fun scanNow() {
-        if (measureMode == MeasureMode.AREA || measureMode == MeasureMode.FLOOR) {
-            val frame = latestFrame
-            val session = arSession
-            val plane = if (frame != null && session != null) {
-                val cx = measurementOverlay.width / 2f
-                val cy = measurementOverlay.height / 2f
-                frame.hitTest(cx, cy).asSequence()
-                    .mapNotNull { it.trackable as? Plane }
-                    .firstOrNull { it.trackingState == TrackingState.TRACKING && it.type == Plane.Type.HORIZONTAL_UPWARD_FACING }
-                    ?: session.getAllTrackables(Plane::class.java)
-                        .filter { it.trackingState == TrackingState.TRACKING && it.type == Plane.Type.HORIZONTAL_UPWARD_FACING }
-                        .maxByOrNull { it.extentX * it.extentZ }
-            } else null
-            if (plane != null) {
-                updateAutoPlaneMeasurement(plane)
-                statusText.text = "Scan complete • Review the green outline. Use Pen or Eraser to edit."
-            } else {
-                statusText.text = "Scanning… move slowly over the floor and try again."
+        when (measureMode) {
+            MeasureMode.FLOOR, MeasureMode.AREA, MeasureMode.CUSTOM_AREA -> {
+                val frame = latestFrame
+                val plane = frame?.let { findBestFloorPlane(it) }
+                if (plane != null) {
+                    updateAutoPlaneMeasurement(plane)
+                    val points = projectPlanePolygon(frame!!, plane)
+                    if (points.size >= 3) measurementOverlay.setAutoFloorOutline(points)
+                    statusText.text = "Floor scan complete • Green outline is the detected floor area."
+                    editTool = EditTool.NONE
+                } else {
+                    statusText.text = "Floor not locked yet • Aim at the floor and move slowly for 2–3 seconds."
+                    Toast.makeText(this, "ARCore has not locked a floor plane yet.", Toast.LENGTH_SHORT).show()
+                }
             }
-        } else if (measureMode == MeasureMode.KITCHEN_TOP) {
-            statusText.text = "Kitchen Top • Tap the countertop to scan its outline."
-        } else {
-            resetMeasurement()
+            MeasureMode.KITCHEN_TOP -> {
+                statusText.text = "Kitchen Top • Tap the countertop to lock its surface."
+            }
+            MeasureMode.DIRECT -> {
+                latestFrame?.let { updateVerticalBoundary(it) }
+                statusText.text = "Wall scan • Aim at the wall, then tap points for exact measurements."
+            }
+            MeasureMode.HEIGHT -> {
+                statusText.text = "Person Height • Stand clearly in view, then scan or tap feet/head."
+            }
         }
     }
 
@@ -879,8 +929,9 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.directButton).alpha = if (mode == MeasureMode.DIRECT) 1f else 0.60f
         findViewById<Button>(R.id.areaButton).alpha = if (mode == MeasureMode.AREA) 1f else 0.60f
         findViewById<Button>(R.id.customAreaButton).alpha = if (mode == MeasureMode.CUSTOM_AREA) 1f else 0.60f
-        findViewById<View>(R.id.areaTools).visibility =
-            if (mode == MeasureMode.AREA || mode == MeasureMode.CUSTOM_AREA || mode == MeasureMode.KITCHEN_TOP) View.VISIBLE else View.GONE
+        findViewById<View>(R.id.areaTools).visibility = View.GONE
+        findViewById<Button>(R.id.editMenuButton).visibility =
+            if (mode == MeasureMode.FLOOR || mode == MeasureMode.AREA || mode == MeasureMode.CUSTOM_AREA || mode == MeasureMode.KITCHEN_TOP) View.VISIBLE else View.GONE
         resetMeasurement()
     }
 
@@ -1243,8 +1294,9 @@ class MainActivity : AppCompatActivity() {
         editTool = EditTool.NONE
         measurementOverlay.clear()
         findViewById<Button>(R.id.finishAreaButton)?.visibility = View.GONE
-        findViewById<View>(R.id.areaTools)?.visibility = if (
-            measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA || measureMode == MeasureMode.KITCHEN_TOP
+        findViewById<View>(R.id.areaTools)?.visibility = View.GONE
+        findViewById<Button>(R.id.editMenuButton)?.visibility = if (
+            measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA || measureMode == MeasureMode.KITCHEN_TOP
         ) View.VISIBLE else View.GONE
         scanNowButton.visibility = View.VISIBLE
         distanceText.visibility = View.GONE
