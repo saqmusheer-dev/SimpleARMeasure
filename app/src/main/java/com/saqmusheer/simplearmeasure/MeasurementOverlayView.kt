@@ -22,13 +22,13 @@ class MeasurementOverlayView @JvmOverloads constructor(
     }
 
     private val greenFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x5539FF88.toInt()
+        color = 0x3339FF88.toInt()
         style = Paint.Style.FILL
     }
 
     private val greenPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFF39FF88.toInt()
-        strokeWidth = 5f
+        strokeWidth = 4f
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
         setShadowLayer(8f, 0f, 0f, 0xAA000000.toInt())
