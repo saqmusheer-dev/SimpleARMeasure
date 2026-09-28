@@ -681,7 +681,7 @@ class MainActivity : AppCompatActivity() {
             measurementOverlay.height * 0.74f,
             measurementOverlay.height * 0.88f
         )
-        val candidates = linkedMapOf<String, Plane>()
+        val candidates = mutableListOf<Plane>()
         for (x in xs) {
             for (y in ys) {
                 frame.hitTest(x, y).forEach { hit ->
@@ -692,7 +692,7 @@ class MainActivity : AppCompatActivity() {
                         plane.type == Plane.Type.HORIZONTAL_UPWARD_FACING &&
                         plane.centerPose.ty() < cameraY - 0.10f
                     ) {
-                        candidates[plane.trackableId.toString()] = plane
+                        if (!candidates.contains(plane)) candidates.add(plane)
                     }
                 }
             }
@@ -706,9 +706,9 @@ class MainActivity : AppCompatActivity() {
                     it.type == Plane.Type.HORIZONTAL_UPWARD_FACING &&
                     it.centerPose.ty() < cameraY - 0.10f
             }
-            .forEach { candidates[it.trackableId.toString()] = it }
+            .forEach { if (!candidates.contains(it)) candidates.add(it) }
 
-        return candidates.values.maxByOrNull { plane ->
+        return candidates.maxByOrNull { plane ->
             val polygon = plane.polygon
             val pointCount = polygon.remaining()
             val extent = plane.extentX * plane.extentZ
