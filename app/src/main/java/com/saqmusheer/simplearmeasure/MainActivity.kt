@@ -1227,6 +1227,32 @@ class MainActivity : AppCompatActivity() {
         return result
     }
 
+    private fun projectWorldPoints(frame: Frame, worldPoints: List<LocalPoint>): List<Pair<Float, Float>> {
+        val view = FloatArray(16)
+        val projection = FloatArray(16)
+        val pv = FloatArray(16)
+        frame.camera.getViewMatrix(view, 0)
+        frame.camera.getProjectionMatrix(projection, 0, 0.01f, 100f)
+        android.opengl.Matrix.multiplyMM(pv, 0, projection, 0, view, 0)
+
+        val points = ArrayList<Pair<Float, Float>>(worldPoints.size)
+        for (point in worldPoints) {
+            val clip = FloatArray(4)
+            android.opengl.Matrix.multiplyMV(
+                clip, 0, pv, 0,
+                floatArrayOf(point.x, point.y, point.z, 1f), 0
+            )
+            if (clip[3] <= 0f) continue
+            val nx = clip[0] / clip[3]
+            val ny = clip[1] / clip[3]
+            points.add(
+                ((nx + 1f) * 0.5f * measurementOverlay.width) to
+                    ((1f - ny) * 0.5f * measurementOverlay.height)
+            )
+        }
+        return points
+    }
+
     private fun projectPlanePolygon(frame: Frame, plane: Plane): List<Pair<Float, Float>> {
         val polygon = plane.polygon
         if (!polygon.hasRemaining()) return emptyList()
