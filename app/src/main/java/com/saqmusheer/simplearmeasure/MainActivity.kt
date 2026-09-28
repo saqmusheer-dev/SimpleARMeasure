@@ -204,6 +204,21 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.settingsButton).setOnClickListener { showSettings() }
         findViewById<Button>(R.id.projectsButton).setOnClickListener { showProjects() }
         findViewById<Button>(R.id.saveButton).setOnClickListener { saveCurrentMeasurement() }
+        findViewById<Button>(R.id.modeMenuButton).setOnClickListener {
+            val menu = findViewById<View>(R.id.modeMenu)
+            menu.visibility = if (menu.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        }
+        findViewById<Button>(R.id.editToolbarButton).setOnClickListener {
+            val edit = findViewById<View>(R.id.areaTools)
+            val editMenu = findViewById<Button>(R.id.editMenuButton)
+            if (editMenu.visibility == View.VISIBLE) {
+                edit.visibility = if (edit.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            } else {
+                Toast.makeText(this, "Finish or scan a surface before editing.", Toast.LENGTH_SHORT).show()
+            }
+        }
+        findViewById<Button>(R.id.projectsToolbarButton).setOnClickListener { showProjects() }
+        findViewById<Button>(R.id.settingsToolbarButton).setOnClickListener { showSettings() }
 
         measurementOverlay.setOnTouchListener { _, event ->
             if (event.action == MotionEvent.ACTION_UP) {
@@ -250,7 +265,7 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(0xFF151122.toInt())
         }
         val title = TextView(this).apply {
-            text = "Simple AR Measure"
+            text = "ARmeasure"
             textSize = 30f
             setTextColor(Color.WHITE)
             typeface = android.graphics.Typeface.DEFAULT_BOLD
@@ -930,6 +945,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.areaButton).alpha = if (mode == MeasureMode.AREA) 1f else 0.60f
         findViewById<Button>(R.id.customAreaButton).alpha = if (mode == MeasureMode.CUSTOM_AREA) 1f else 0.60f
         findViewById<View>(R.id.areaTools).visibility = View.GONE
+        findViewById<View>(R.id.modeMenu).visibility = View.GONE
         findViewById<Button>(R.id.editMenuButton).visibility =
             if (mode == MeasureMode.FLOOR || mode == MeasureMode.AREA || mode == MeasureMode.CUSTOM_AREA || mode == MeasureMode.KITCHEN_TOP) View.VISIBLE else View.GONE
         resetMeasurement()
