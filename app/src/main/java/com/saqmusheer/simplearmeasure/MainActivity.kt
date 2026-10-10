@@ -251,7 +251,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.undoAreaPointButton).setOnClickListener { undoLastAreaPoint() }
 
         findViewById<Button>(R.id.roomDesignButton).setOnClickListener {
-            Toast.makeText(this, "Interior Design workspace • Room design tools are next.", Toast.LENGTH_SHORT).show()
+            startActivity(Intent(this, RoomDesignerActivity::class.java))
         }
         findViewById<Button>(R.id.furnitureButton).setOnClickListener {
             Toast.makeText(this, "Furniture placement workspace • Coming after the scan engine.", Toast.LENGTH_SHORT).show()
