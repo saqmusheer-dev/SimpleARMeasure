@@ -25,6 +25,8 @@
             android:name="com.google.mlkit.vision.DEPENDENCIES"
             android:value="subject_segment" />
 
+        <activity android:name=".RoomDesignerActivity" android:screenOrientation="portrait" android:exported="false" />
+
         <activity
             android:name=".MainActivity"
             android:screenOrientation="portrait"
