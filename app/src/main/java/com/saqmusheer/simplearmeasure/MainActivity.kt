@@ -17,6 +17,7 @@ import android.view.Surface
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ImageView
 import android.widget.ScrollView
@@ -304,13 +305,21 @@ class MainActivity : AppCompatActivity() {
         val opening = target.visibility != View.VISIBLE
 
         ids.forEach { id ->
-            val view = findViewById<View>(id)
-            view.visibility = if (id == menuId && opening) View.VISIBLE else View.GONE
-            if (id == menuId && opening) view.bringToFront()
+            findViewById<View>(id).visibility = if (id == menuId && opening) View.VISIBLE else View.GONE
         }
 
-        // Keep the workspace menu clean: measurement actions belong to the
-        // contextual result area and should never sit underneath the menu.
+        if (opening) {
+            // Anchor the contextual panel above the complete dock, including the
+            // changing result card and Android's navigation-bar inset.
+            val params = target.layoutParams as? FrameLayout.LayoutParams
+            val dock = findViewById<View>(R.id.bottomDock)
+            if (params != null) {
+                params.bottomMargin = dock.height + dp(10)
+                target.layoutParams = params
+            }
+        }
+
+        // Never bring a contextual panel over the persistent bottom navigation.
         findViewById<View>(R.id.resultActions)?.visibility =
             if (opening) View.GONE else View.VISIBLE
     }
@@ -841,15 +850,19 @@ class MainActivity : AppCompatActivity() {
 
         if (plane != null) {
             accumulateFloorPlane(plane)
-            val surface = floorScanSamples.takeIf { it.size >= 4 } ?: planeWorldPoints(plane)
-            val screen = projectWorldPoints(frame, surface)
+            // A tracked ARCore plane already provides an ordered polygon. Do not
+            // draw the accumulated raw samples as a path: those samples are not
+            // in perimeter order and create hundreds of crossing green lines.
+            val surface = convexHullXZ(planeWorldPoints(plane))
+            val screen = projectPlanePolygon(frame, plane)
             if (screen.size >= 3) measurementOverlay.setAutoFloorOutline(screen)
+            else measurementOverlay.clearAutoFloorOutline()
 
             if ((measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA) &&
                 now - lastAutoAreaUpdateMs > 300L
             ) {
                 lastAutoAreaUpdateMs = now
-                updateAutoSurfaceMeasurement(surface)
+                updateAutoPlaneMeasurement(plane)
             }
             return
         }
@@ -976,7 +989,7 @@ class MainActivity : AppCompatActivity() {
         segmentText.visibility = View.GONE
         distanceText.text = String.format(
             Locale.US,
-            "%.2f m²\\n%.1f ft²\\nL %.1f ft × W %.1f ft",
+            "%.2f m²\n%.1f ft²\nL %.1f ft × W %.1f ft",
             area,
             area * 10.7639104f,
             dimensions.first * 3.28084f,
@@ -1512,7 +1525,9 @@ class MainActivity : AppCompatActivity() {
                 clip, 0, pv, 0,
                 floatArrayOf(point.x, point.y, point.z, 1f), 0
             )
-            if (clip[3] <= 0f) continue
+            // Skipping a vertex changes polygon adjacency and can draw a
+            // misleading diagonal across the entire camera view.
+            if (clip[3] <= 0f) return emptyList()
             val nx = clip[0] / clip[3]
             val ny = clip[1] / clip[3]
             points.add(
@@ -1546,7 +1561,7 @@ class MainActivity : AppCompatActivity() {
             android.opengl.Matrix.multiplyMV(worldPoint, 0, model, 0, modelPoint, 0)
             val clip = FloatArray(4)
             android.opengl.Matrix.multiplyMV(clip, 0, pv, 0, worldPoint, 0)
-            if (clip[3] <= 0f) continue
+            if (clip[3] <= 0f) return emptyList()
             val nx = clip[0] / clip[3]
             val ny = clip[1] / clip[3]
             points.add(
