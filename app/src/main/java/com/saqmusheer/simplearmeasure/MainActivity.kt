@@ -237,6 +237,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.eraserButton).setOnClickListener { setEditTool(EditTool.ERASER) }
         findViewById<Button>(R.id.undoAreaButton).setOnClickListener { undoAreaEdit() }
         findViewById<Button>(R.id.doneAreaButton).setOnClickListener { finishAreaEdit() }
+        findViewById<Button>(R.id.redrawAreaButton).setOnClickListener { beginAreaRedraw() }
         findViewById<Button>(R.id.resetButton).setOnClickListener { resetMeasurement() }
         findViewById<Button>(R.id.projectsButton).setOnClickListener { showProjects() }
         findViewById<Button>(R.id.saveButton).setOnClickListener { saveCurrentMeasurement() }
@@ -729,7 +730,9 @@ class MainActivity : AppCompatActivity() {
         // that upright orientation, while ARCore IMAGE_PIXELS uses the camera
         // image orientation. Treating the mask as unrotated caused the outline
         // to run down the screen and miss the person's body.
-        val rotation = ((rotationDegrees % 360) + 360) % 360
+        // ML Kit's foreground mask uses the original MediaImage pixel grid.
+        // Rotating these coordinates again displaced the outline and endpoints.
+        val rotation = 0
         val quarterTurn = rotation == 90 || rotation == 270
         val uprightWidth = if (quarterTurn) imageHeight else imageWidth
         val uprightHeight = if (quarterTurn) imageWidth else imageHeight
@@ -927,7 +930,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun findDepthHit(frame: Frame, x: Float, y: Float): HitResult? {
-        val offsets = floatArrayOf(0f, -12f, 12f, -24f, 24f, -36f, 36f)
+        val offsets = floatArrayOf(0f, -6f, 6f, -12f, 12f)
         // For person height, do not fall back to a wall/floor plane: that can
         // turn the head point into the wall behind the person. Use real depth
         // hits only, with a small neighborhood for temporal robustness.
@@ -1258,6 +1261,27 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun beginAreaRedraw() {
+        if (measureMode != MeasureMode.FLOOR && measureMode != MeasureMode.AREA &&
+            measureMode != MeasureMode.KITCHEN_TOP && measureMode != MeasureMode.CUSTOM_AREA) {
+            Toast.makeText(this, "Choose a floor or area measurement first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        editableAreaWorld.clear()
+        editableAreaScreen.clear()
+        areaAnchors.forEach { it.detach() }
+        areaAnchors.clear()
+        editingAutoArea = false
+        editTool = EditTool.PEN
+        measurementOverlay.clearAutoFloorOutline()
+        measurementOverlay.setAreaPoints(emptyList())
+        findViewById<View>(R.id.areaTools)?.visibility = View.VISIBLE
+        findViewById<Button>(R.id.undoAreaPointButton)?.visibility = View.GONE
+        findViewById<Button>(R.id.finishAreaButton)?.visibility = View.GONE
+        distanceText.visibility = View.VISIBLE
+        distanceText.text = "0 corners"
+        statusText.text = "Redraw active • Tap corners around only the carpet/floor area, then Done."
+    }
     private fun setEditTool(tool: EditTool) {
         editTool = if (editTool == tool) EditTool.NONE else tool
         if (measureMode == MeasureMode.AREA || measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.KITCHEN_TOP) {
