@@ -633,12 +633,12 @@ class MainActivity : AppCompatActivity() {
                 measureMode != MeasureMode.DOOR && measureMode != MeasureMode.WINDOW) {
                 if (firstAnchor == null) {
                     statusText.text = when (measureMode) {
-                        MeasureMode.HEIGHT -> "Height mode • Stand clearly in view."
+                        MeasureMode.HEIGHT -> "Height mode • Keep full body visible; waiting for automatic outline."
                         else -> measureMode.label + " mode • Tap the first point."
                     }
                 } else if (secondAnchor == null) {
                     statusText.text = if (measureMode == MeasureMode.HEIGHT) {
-                        "Point A = feet • Aim at the top of the head and tap."
+                        "Automatic height is detecting your outline • Keep still and wait."
                     } else {
                         "Point A locked • Move to the second point and tap."
                     }
@@ -1253,7 +1253,7 @@ class MainActivity : AppCompatActivity() {
                 statusText.text = "Wall scan • Aim at the wall, then tap points for exact measurements."
             }
             MeasureMode.HEIGHT -> {
-                statusText.text = "Person Height • Stand clearly in view, then scan or tap feet/head."
+                statusText.text = "Person Height • Keep head and both feet visible; wait for the blue outline."
             }
             MeasureMode.DOOR, MeasureMode.WINDOW -> {
                 statusText.text = measureMode.label + " • Mark four corners in order, then tap Finish."
