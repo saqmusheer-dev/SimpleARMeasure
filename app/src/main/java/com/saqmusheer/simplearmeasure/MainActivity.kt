@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.content.res.ColorStateList
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.location.LocationManager
@@ -17,6 +19,7 @@ import android.view.Surface
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ImageView
 import android.widget.ScrollView
@@ -27,6 +30,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.google.ar.core.Anchor
 import com.google.ar.core.Config
 import com.google.ar.core.Coordinates2d
@@ -63,7 +68,9 @@ class MainActivity : AppCompatActivity() {
         HEIGHT("Person Height"),
         DIRECT("3D"),
         AREA("Auto Area"),
-        CUSTOM_AREA("Custom Area")
+        CUSTOM_AREA("Custom Area"),
+        DOOR("Door"),
+        WINDOW("Window")
     }
 
     private lateinit var arSceneView: ARSceneView
@@ -93,6 +100,7 @@ class MainActivity : AppCompatActivity() {
     private var secondAnchor: Anchor? = null
     private var measureMode = MeasureMode.FLOOR
     private val areaAnchors = mutableListOf<Anchor>()
+    private var areaFinished = false
     private val editableAreaWorld = mutableListOf<LocalPoint>()
     private val editableAreaScreen = mutableListOf<Pair<Float, Float>>()
     private var editTool = EditTool.NONE
@@ -104,6 +112,7 @@ class MainActivity : AppCompatActivity() {
     private var wallReference = true
     private var showRuler = true
     private var arStarted = false
+    private var settingsDialog: AlertDialog? = null
 
     private var subjectSegmenter: SubjectSegmenter? = null
     private var segmentationBusy = false
@@ -186,6 +195,23 @@ class MainActivity : AppCompatActivity() {
     private fun setupMainUi() {
         setContentView(R.layout.activity_main)
 
+        // Android 15+ edge-to-edge can place the bottom dock behind the system
+        // navigation bar. Reserve the live navigation-bar inset inside the dock.
+        val bottomDock = findViewById<View>(R.id.bottomDock)
+        val originalBottomPadding = bottomDock.paddingBottom
+        ViewCompat.setOnApplyWindowInsetsListener(bottomDock) { view, insets ->
+            val navigationBarInset =
+                insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
+            view.setPadding(
+                view.paddingLeft,
+                view.paddingTop,
+                view.paddingRight,
+                originalBottomPadding + navigationBarInset
+            )
+            insets
+        }
+        ViewCompat.requestApplyInsets(bottomDock)
+
         arSceneView = findViewById(R.id.arSceneView)
         statusText = findViewById(R.id.statusText)
         distanceText = findViewById(R.id.distanceText)
@@ -211,6 +237,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.eraserButton).setOnClickListener { setEditTool(EditTool.ERASER) }
         findViewById<Button>(R.id.undoAreaButton).setOnClickListener { undoAreaEdit() }
         findViewById<Button>(R.id.doneAreaButton).setOnClickListener { finishAreaEdit() }
+        findViewById<Button>(R.id.redrawAreaButton).setOnClickListener { beginAreaRedraw() }
         findViewById<Button>(R.id.resetButton).setOnClickListener { resetMeasurement() }
         findViewById<Button>(R.id.projectsButton).setOnClickListener { showProjects() }
         findViewById<Button>(R.id.saveButton).setOnClickListener { saveCurrentMeasurement() }
@@ -219,7 +246,9 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.interiorButton).setOnClickListener { showWorkspaceMenu(R.id.interiorMenu) }
         findViewById<Button>(R.id.kitchenButton).setOnClickListener { showWorkspaceMenu(R.id.kitchenMenu) }
         findViewById<Button>(R.id.objectsButton).setOnClickListener { showWorkspaceMenu(R.id.objectMenu) }
-        findViewById<Button>(R.id.settingsBottomButton).setOnClickListener { showSettings() }
+        findViewById<Button>(R.id.settingsTopButton).setOnClickListener { showSettings() }
+        findViewById<Button>(R.id.settingsBottomButton).setOnClickListener { handleBackOrHome() }
+        findViewById<Button>(R.id.undoAreaPointButton).setOnClickListener { undoLastAreaPoint() }
 
         findViewById<Button>(R.id.roomDesignButton).setOnClickListener {
             Toast.makeText(this, "Interior Design workspace • Room design tools are next.", Toast.LENGTH_SHORT).show()
@@ -245,13 +274,16 @@ class MainActivity : AppCompatActivity() {
             statusText.text = "Object Scan • Aim at an object and tap SCAN NOW."
         }
         findViewById<Button>(R.id.doorObjectButton).setOnClickListener {
-            Toast.makeText(this, "Door detection uses the upcoming object engine.", Toast.LENGTH_SHORT).show()
+            selectMode(MeasureMode.DOOR)
+            statusText.text = "Door measure • Tap bottom-left, bottom-right, top-right, then top-left."
         }
         findViewById<Button>(R.id.windowObjectButton).setOnClickListener {
-            Toast.makeText(this, "Window detection uses the upcoming object engine.", Toast.LENGTH_SHORT).show()
+            selectMode(MeasureMode.WINDOW)
+            statusText.text = "Window measure • Tap bottom-left, bottom-right, top-right, then top-left."
         }
         findViewById<Button>(R.id.furnitureObjectButton).setOnClickListener {
-            Toast.makeText(this, "Furniture detection uses the upcoming object engine.", Toast.LENGTH_SHORT).show()
+            selectMode(MeasureMode.DIRECT)
+            statusText.text = "Furniture measure • Tap two points to measure a straight-line distance."
         }
 
         measurementOverlay.setOnTouchListener { _, event ->
@@ -276,15 +308,26 @@ class MainActivity : AppCompatActivity() {
         val opening = target.visibility != View.VISIBLE
 
         ids.forEach { id ->
-            val view = findViewById<View>(id)
-            view.visibility = if (id == menuId && opening) View.VISIBLE else View.GONE
-            if (id == menuId && opening) view.bringToFront()
+            findViewById<View>(id).visibility = if (id == menuId && opening) View.VISIBLE else View.GONE
         }
 
-        // Keep the workspace menu clean: measurement actions belong to the
-        // contextual result area and should never sit underneath the menu.
+        // Hide the changing result card before measuring the dock height so
+        // the menu sits immediately above navigation rather than floating high.
         findViewById<View>(R.id.resultActions)?.visibility =
             if (opening) View.GONE else View.VISIBLE
+
+        if (opening) {
+            val dock = findViewById<View>(R.id.bottomDock)
+            target.post {
+                val params = target.layoutParams as? FrameLayout.LayoutParams
+                if (params != null) {
+                    params.bottomMargin = dock.height + dp(10)
+                    target.layoutParams = params
+                }
+            }
+        }
+
+        // Never bring a contextual panel over the persistent bottom navigation.
     }
 
     private fun ensureCameraPermission() {
@@ -351,55 +394,195 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showSettings() {
-        val box = LinearLayout(this).apply {
+        settingsDialog?.dismiss()
+
+        val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 4, 24, 4)
+            setPadding(dp(18), dp(18), dp(18), dp(16))
+            background = GradientDrawable().apply {
+                setColor(0xFF0E1B2A.toInt())
+                cornerRadius = dp(22).toFloat()
+                setStroke(dp(1), 0xFF344B63.toInt())
+            }
         }
 
-        fun addSwitch(title: String, checked: Boolean, onChanged: (Boolean) -> Unit) {
-            val sw = Switch(this).apply {
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val headerText = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        headerText.addView(TextView(this).apply {
+            text = "Settings"
+            textSize = 24f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+        })
+        headerText.addView(TextView(this).apply {
+            text = "PERSON & SURFACE SCAN"
+            textSize = 10f
+            letterSpacing = 0.12f
+            setTextColor(0xFF8DA9C2.toInt())
+            setPadding(0, dp(3), 0, 0)
+        })
+        header.addView(headerText, LinearLayout.LayoutParams(0, -2, 1f))
+        val closeButton = Button(this).apply {
+            text = "×"
+            textSize = 24f
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                setColor(0xFF1C3045.toInt())
+                cornerRadius = dp(14).toFloat()
+            }
+            minWidth = dp(44)
+            minimumWidth = dp(44)
+            minHeight = dp(44)
+            minimumHeight = dp(44)
+            setPadding(0, 0, 0, dp(2))
+        }
+        header.addView(closeButton)
+        panel.addView(header)
+
+        val scroll = ScrollView(this).apply {
+            isFillViewport = false
+            clipToPadding = false
+            setPadding(0, dp(18), 0, dp(8))
+        }
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        scroll.addView(content)
+
+        fun addSection(title: String) {
+            content.addView(TextView(this).apply {
+                text = title.uppercase(Locale.US)
+                textSize = 11f
+                letterSpacing = 0.08f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                setTextColor(0xFF60A5FA.toInt())
+                setPadding(dp(2), dp(12), 0, dp(8))
+            })
+        }
+
+        fun addSetting(title: String, description: String, checked: Boolean, onChanged: (Boolean) -> Unit) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(13), dp(11), dp(10), dp(11))
+                background = GradientDrawable().apply {
+                    setColor(0xFF17283A.toInt())
+                    cornerRadius = dp(16).toFloat()
+                    setStroke(dp(1), 0xFF263D53.toInt())
+                }
+            }
+            val labels = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            labels.addView(TextView(this).apply {
                 text = title
-                textSize = 16f
+                textSize = 14f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                setTextColor(0xFFF3F7FB.toInt())
+            })
+            labels.addView(TextView(this).apply {
+                text = description
+                textSize = 11f
+                setTextColor(0xFF9EB1C4.toInt())
+                setPadding(0, dp(4), dp(6), 0)
+            })
+            row.addView(labels, LinearLayout.LayoutParams(0, -2, 1f))
+            val sw = Switch(this).apply {
                 isChecked = checked
-                setPadding(0, 10, 0, 10)
+                showText = false
+                thumbTintList = ColorStateList(
+                    arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                    intArrayOf(0xFF34D399.toInt(), 0xFF8191A1.toInt())
+                )
+                trackTintList = ColorStateList(
+                    arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                    intArrayOf(0x6634D399, 0x553D5368)
+                )
                 setOnCheckedChangeListener { _, value -> onChanged(value) }
             }
-            box.addView(sw)
+            row.addView(sw)
+            content.addView(row, LinearLayout.LayoutParams(-1, -2).apply {
+                bottomMargin = dp(9)
+            })
         }
 
-        addSwitch("Automatic person outline", autoPersonOutline) {
+        addSection("Detection")
+        addSetting("Person outline", "Trace the visible human silhouette", autoPersonOutline) {
             autoPersonOutline = it
             prefs.edit().putBoolean("auto_person", it).apply()
             if (!it) measurementOverlay.clearPersonOutline()
         }
-        addSwitch("Automatic floor boundary", autoFloorOutline) {
+        addSetting("Floor boundary", "Show the detected floor surface", autoFloorOutline) {
             autoFloorOutline = it
             prefs.edit().putBoolean("auto_floor", it).apply()
+            if (!it) measurementOverlay.clearAutoFloorOutline()
         }
-        addSwitch("Use wall as height reference", wallReference) {
+        addSection("Measurement")
+        addSetting("Wall height reference", "Use a detected wall for context", wallReference) {
             wallReference = it
             prefs.edit().putBoolean("wall_reference", it).apply()
         }
-        addSwitch("Show side ruler", showRuler) {
+        addSetting("Side ruler", "Keep the scale guide visible", showRuler) {
             showRuler = it
             prefs.edit().putBoolean("show_ruler", it).apply()
             findViewById<View>(R.id.rulerView)?.visibility = if (it) View.VISIBLE else View.GONE
         }
 
-        val info = TextView(this).apply {
-            text = "License: active\nAutomatic detection works on-device. Good lighting and a clear view improve results."
-            textSize = 14f
-            setTextColor(0xFF555555.toInt())
-            setPadding(0, 14, 0, 4)
+        val tip = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(13), dp(14), dp(14))
+            background = GradientDrawable().apply {
+                setColor(0xFF122C3A.toInt())
+                cornerRadius = dp(16).toFloat()
+                setStroke(dp(1), 0xFF22564F.toInt())
+            }
         }
-        box.addView(info)
+        tip.addView(TextView(this).apply {
+            text = "QUICK TIP"
+            textSize = 11f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(0xFF6EE7B7.toInt())
+        })
+        tip.addView(TextView(this).apply {
+            text = "For a full room area, tap each floor corner in order and close the outline. For person height, keep the full head and both feet visible in good light."
+            textSize = 12f
+            setTextColor(0xFFD0DEE8.toInt())
+            setPadding(0, dp(6), 0, 0)
+        })
+        content.addView(tip, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+        panel.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
 
-        AlertDialog.Builder(this)
-            .setTitle("Settings")
-            .setView(box)
-            .setPositiveButton("DONE", null)
-            .show()
+        val doneButton = Button(this).apply {
+            text = "DONE"
+            textSize = 13f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                setColor(0xFF2563EB.toInt())
+                cornerRadius = dp(15).toFloat()
+            }
+            setPadding(dp(18), 0, dp(18), 0)
+        }
+        panel.addView(doneButton, LinearLayout.LayoutParams(-1, dp(48)).apply {
+            topMargin = dp(10)
+        })
+
+        val dialog = AlertDialog.Builder(this).setView(panel).create()
+        settingsDialog = dialog
+        dialog.setOnDismissListener { if (settingsDialog === dialog) settingsDialog = null }
+        closeButton.setOnClickListener { dialog.dismiss() }
+        doneButton.setOnClickListener { dialog.dismiss() }
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setGravity(Gravity.START or Gravity.CENTER_VERTICAL)
+            setLayout(dp(330), android.view.WindowManager.LayoutParams.MATCH_PARENT)
+            attributes = attributes.apply { dimAmount = 0.48f }
+            addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        }
     }
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density + 0.5f).toInt()
 
     private fun startAr() {
         if (arStarted || !hasCameraPermission()) return
@@ -445,15 +628,17 @@ class MainActivity : AppCompatActivity() {
 
             // Floor/area modes are scan-driven, not point-to-point. Do not overwrite
             // the scan status every frame with the old "Tap the first point" message.
-            if (measureMode != MeasureMode.FLOOR && measureMode != MeasureMode.AREA && measureMode != MeasureMode.CUSTOM_AREA) {
+            if (measureMode != MeasureMode.FLOOR && measureMode != MeasureMode.AREA &&
+                measureMode != MeasureMode.CUSTOM_AREA && measureMode != MeasureMode.DIRECT &&
+                measureMode != MeasureMode.DOOR && measureMode != MeasureMode.WINDOW) {
                 if (firstAnchor == null) {
                     statusText.text = when (measureMode) {
-                        MeasureMode.HEIGHT -> "Height mode • Stand clearly in view."
+                        MeasureMode.HEIGHT -> "Height mode • Keep full body visible; waiting for automatic outline."
                         else -> measureMode.label + " mode • Tap the first point."
                     }
                 } else if (secondAnchor == null) {
                     statusText.text = if (measureMode == MeasureMode.HEIGHT) {
-                        "Point A = feet • Aim at the top of the head and tap."
+                        "Automatic height is detecting your outline • Keep still and wait."
                     } else {
                         "Point A locked • Move to the second point and tap."
                     }
@@ -486,7 +671,7 @@ class MainActivity : AppCompatActivity() {
                 ?.addOnSuccessListener { result ->
                     val current = latestFrame
                     if (current != null && measureMode == MeasureMode.HEIGHT && autoPersonOutline) {
-                        applyPersonMask(result.foregroundConfidenceMask, imageWidth, imageHeight, current)
+                        applyPersonMask(result.foregroundConfidenceMask, imageWidth, imageHeight, rotation, current)
                     }
                 }
                 ?.addOnFailureListener {
@@ -528,125 +713,175 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun applyPersonMask(mask: FloatBuffer?, imageWidth: Int, imageHeight: Int, frame: Frame) {
-        if (mask == null || !mask.hasRemaining()) return
+    private fun applyPersonMask(
+        mask: FloatBuffer?,
+        imageWidth: Int,
+        imageHeight: Int,
+        rotationDegrees: Int,
+        frame: Frame
+    ) {
+        if (mask == null || !mask.hasRemaining() || imageWidth <= 0 || imageHeight <= 0) return
 
         val confidence = FloatArray(mask.remaining())
         mask.rewind()
         mask.get(confidence)
 
-        // ML Kit can return a mask at a different resolution than the camera image.
-        // Map the mask back to IMAGE_PIXELS instead of assuming identical dimensions.
-        val aspect = imageWidth.toFloat() / imageHeight.toFloat()
-        var maskWidth = imageWidth
-        var maskHeight = imageHeight
-        if (confidence.size != imageWidth * imageHeight) {
-            maskWidth = max(1, sqrt(confidence.size.toFloat() * aspect).toInt())
+        // Keep the segmentation mask in the MediaImage pixel coordinate
+        // space used by ARCore IMAGE_PIXELS. Applying the camera rotation again
+        // misaligns the body outline and can shift the head/foot endpoints.
+        // ML Kit's foreground mask uses the original MediaImage pixel grid.
+        // Rotating these coordinates again displaced the outline and endpoints.
+        val rotation = 0
+        val quarterTurn = rotation == 90 || rotation == 270
+        val uprightWidth = if (quarterTurn) imageHeight else imageWidth
+        val uprightHeight = if (quarterTurn) imageWidth else imageHeight
+        val uprightAspect = uprightWidth.toFloat() / uprightHeight.toFloat()
+
+        var maskWidth = uprightWidth
+        var maskHeight = uprightHeight
+        if (confidence.size != uprightWidth * uprightHeight) {
+            maskWidth = max(1, sqrt(confidence.size.toFloat() * uprightAspect).toInt())
             maskHeight = max(1, confidence.size / maskWidth)
             if (maskWidth * maskHeight != confidence.size) {
-                maskHeight = max(1, sqrt(confidence.size.toFloat() / aspect).toInt())
+                maskHeight = max(1, sqrt(confidence.size.toFloat() / uprightAspect).toInt())
                 maskWidth = max(1, confidence.size / maskHeight)
             }
         }
-        if (maskWidth * maskHeight > confidence.size) {
-            maskHeight = max(1, confidence.size / maskWidth)
-        }
-        if (maskWidth * maskHeight < confidence.size) {
-            maskWidth = max(1, confidence.size / maskHeight)
+        if (maskWidth * maskHeight > confidence.size) maskHeight = max(1, confidence.size / maskWidth)
+        if (maskWidth * maskHeight < confidence.size) maskWidth = max(1, confidence.size / maskHeight)
+        if (maskWidth * maskHeight != confidence.size) return
+
+        fun uprightToRaw(x: Float, y: Float): Pair<Float, Float> {
+            val ux = x.coerceIn(0f, (uprightWidth - 1).toFloat())
+            val uy = y.coerceIn(0f, (uprightHeight - 1).toFloat())
+            return when (rotation) {
+                90 -> uy to (imageHeight - 1f - ux)
+                180 -> (imageWidth - 1f - ux) to (imageHeight - 1f - uy)
+                270 -> (imageWidth - 1f - uy) to ux
+                else -> ux to uy
+            }
         }
 
-        val yStep = max(2, maskHeight / 160)
         val xStep = max(2, maskWidth / 220)
-        val leftBoundary = ArrayList<Pair<Float, Float>>(160)
-        val rightBoundary = ArrayList<Pair<Float, Float>>(160)
-        val topSamples = ArrayList<Float>(12)
-        val bottomSamples = ArrayList<Float>(12)
-        var topY = Float.MAX_VALUE
-        var bottomY = -1f
-        var rows = 0
+        val yStep = max(2, maskHeight / 160)
+        val gridWidth = (maskWidth + xStep - 1) / xStep
+        val gridHeight = (maskHeight + yStep - 1) / yStep
+        if (gridWidth < 3 || gridHeight < 10) return
 
-        for (my in 0 until maskHeight step yStep) {
-            var left = maskWidth
-            var right = -1
-            for (mx in 0 until maskWidth step xStep) {
+        val foreground = BooleanArray(gridWidth * gridHeight)
+        for (gy in 0 until gridHeight) {
+            val my = min(maskHeight - 1, gy * yStep)
+            for (gx in 0 until gridWidth) {
+                val mx = min(maskWidth - 1, gx * xStep)
                 val index = my * maskWidth + mx
-                if (index < confidence.size && confidence[index] > 0.62f) {
-                    left = min(left, mx)
-                    right = max(right, mx)
+                foreground[gy * gridWidth + gx] = confidence[index] > 0.58f
+            }
+        }
+
+        val visited = BooleanArray(foreground.size)
+        val queue = IntArray(foreground.size)
+        var largestComponent = IntArray(0)
+        for (seed in foreground.indices) {
+            if (!foreground[seed] || visited[seed]) continue
+            var head = 0
+            var tail = 0
+            queue[tail++] = seed
+            visited[seed] = true
+            while (head < tail) {
+                val current = queue[head++]
+                val gx = current % gridWidth
+                val gy = current / gridWidth
+                for (dy in -1..1) for (dx in -1..1) {
+                    if (dx == 0 && dy == 0) continue
+                    val nx = gx + dx
+                    val ny = gy + dy
+                    if (nx !in 0 until gridWidth || ny !in 0 until gridHeight) continue
+                    val next = ny * gridWidth + nx
+                    if (foreground[next] && !visited[next]) {
+                        visited[next] = true
+                        queue[tail++] = next
+                    }
                 }
             }
+            if (tail > largestComponent.size) largestComponent = queue.copyOf(tail)
+        }
+        if (largestComponent.size < 30) return
 
-            if (right < left || right - left < max(2, maskWidth / 80)) continue
+        val rowMin = IntArray(gridHeight) { gridWidth }
+        val rowMax = IntArray(gridHeight) { -1 }
+        largestComponent.forEach { index ->
+            val gx = index % gridWidth
+            val gy = index / gridWidth
+            rowMin[gy] = min(rowMin[gy], gx)
+            rowMax[gy] = max(rowMax[gy], gx)
+        }
 
-            val imageY = my.toFloat() / max(1, maskHeight - 1) * (imageHeight - 1)
-            val leftX = left.toFloat() / max(1, maskWidth - 1) * (imageWidth - 1)
-            val rightX = right.toFloat() / max(1, maskWidth - 1) * (imageWidth - 1)
-
-            leftBoundary.add(leftX to imageY)
-            rightBoundary.add(rightX to imageY)
-            rows++
-
-            if (imageY < topY) {
-                topY = imageY
+        val leftBoundary = ArrayList<Pair<Float, Float>>(gridHeight)
+        val rightBoundary = ArrayList<Pair<Float, Float>>(gridHeight)
+        val topSamples = ArrayList<Float>()
+        val bottomSamples = ArrayList<Float>()
+        var topY = Float.MAX_VALUE
+        var bottomY = -1f
+        for (gy in 0 until gridHeight) {
+            val left = rowMin[gy]
+            val right = rowMax[gy]
+            if (right < left || right - left < 1) continue
+            val my = min(maskHeight - 1, gy * yStep)
+            val uprightY = my.toFloat() / max(1, maskHeight - 1) * (uprightHeight - 1)
+            val leftUprightX = min(maskWidth - 1, left * xStep).toFloat() /
+                max(1, maskWidth - 1) * (uprightWidth - 1)
+            val rightUprightX = min(maskWidth - 1, right * xStep).toFloat() /
+                max(1, maskWidth - 1) * (uprightWidth - 1)
+            val leftRaw = uprightToRaw(leftUprightX, uprightY)
+            val rightRaw = uprightToRaw(rightUprightX, uprightY)
+            leftBoundary.add(leftRaw.first to leftRaw.second)
+            rightBoundary.add(rightRaw.first to rightRaw.second)
+            if (uprightY < topY) {
+                topY = uprightY
                 topSamples.clear()
             }
-            if (imageY - topY <= yStep * imageHeight.toFloat() / max(1, maskHeight - 1) * 2f) {
-                topSamples.add((leftX + rightX) * 0.5f)
-            }
-
-            if (imageY > bottomY) {
-                bottomY = imageY
+            if (uprightY - topY <= uprightHeight * 0.012f) topSamples.add((leftUprightX + rightUprightX) * 0.5f)
+            if (uprightY > bottomY) {
+                bottomY = uprightY
                 bottomSamples.clear()
             }
-            if (bottomY - imageY <= yStep * imageHeight.toFloat() / max(1, maskHeight - 1) * 2f) {
-                bottomSamples.add((leftX + rightX) * 0.5f)
-            }
+            if (bottomY - uprightY <= uprightHeight * 0.012f) bottomSamples.add((leftUprightX + rightUprightX) * 0.5f)
         }
+        if (leftBoundary.size < 10 || bottomY < 0f) return
 
-        if (rows < 10 || bottomY < 0f) return
+        val rawPoints = ArrayList<Float>((leftBoundary.size + rightBoundary.size) * 2)
+        leftBoundary.forEach { rawPoints.add(it.first); rawPoints.add(it.second) }
+        rightBoundary.forEach { rawPoints.add(it.first); rawPoints.add(it.second) }
 
-        val topX = if (topSamples.isNotEmpty()) topSamples.average().toFloat() else imageWidth / 2f
-        val bottomX = if (bottomSamples.isNotEmpty()) bottomSamples.average().toFloat() else imageWidth / 2f
-
-        val points = ArrayList<Float>((leftBoundary.size + rightBoundary.size) * 2)
-        leftBoundary.forEach {
-            points.add(it.first)
-            points.add(it.second)
-        }
-        rightBoundary.forEach {
-            points.add(it.first)
-            points.add(it.second)
-        }
-
-        val screenPoints = FloatArray(points.size)
+        val screenPoints = FloatArray(rawPoints.size)
         try {
             frame.transformCoordinates2d(
-                Coordinates2d.IMAGE_PIXELS,
-                points.toFloatArray(),
-                Coordinates2d.VIEW,
-                screenPoints
+                Coordinates2d.IMAGE_PIXELS, rawPoints.toFloatArray(),
+                Coordinates2d.VIEW, screenPoints
             )
         } catch (_: Exception) {
             return
         }
-
         val outline = ArrayList<Pair<Float, Float>>(screenPoints.size / 2)
-        val leftCount = leftBoundary.size
-        for (i in 0 until leftCount) {
-            outline.add(screenPoints[i * 2] to screenPoints[i * 2 + 1])
-        }
-        for (i in leftCount until leftCount + rightBoundary.size) {
-            outline.add(screenPoints[i * 2] to screenPoints[i * 2 + 1])
-        }
+        for (i in screenPoints.indices step 2) outline.add(screenPoints[i] to screenPoints[i + 1])
         measurementOverlay.setPersonOutline(outline)
 
+        // Use upright coordinates for checking that the full person is visible.
+        if (topY <= uprightHeight * 0.025f || bottomY >= uprightHeight * 0.975f) {
+            statusText.text = "Person outline detected • Include the full head and both feet."
+            return
+        }
+
+        val topUprightX = if (topSamples.isNotEmpty()) topSamples.average().toFloat() else uprightWidth / 2f
+        val bottomUprightX = if (bottomSamples.isNotEmpty()) bottomSamples.average().toFloat() else uprightWidth / 2f
+        val topRaw = uprightToRaw(topUprightX, topY)
+        val bottomRaw = uprightToRaw(bottomUprightX, bottomY)
         val endpoints = FloatArray(4)
         try {
             frame.transformCoordinates2d(
                 Coordinates2d.IMAGE_PIXELS,
-                floatArrayOf(topX, topY, bottomX, bottomY),
-                Coordinates2d.VIEW,
-                endpoints
+                floatArrayOf(topRaw.first, topRaw.second, bottomRaw.first, bottomRaw.second),
+                Coordinates2d.VIEW, endpoints
             )
         } catch (_: Exception) {
             return
@@ -656,43 +891,45 @@ class MainActivity : AppCompatActivity() {
         val topScreenY = endpoints[1]
         val bottomScreenX = endpoints[2]
         val bottomScreenY = endpoints[3]
-
         val topHit = findDepthHit(frame, topScreenX, topScreenY)
         val bottomHit = findDepthHit(frame, bottomScreenX, bottomScreenY)
-        if (topHit != null && bottomHit != null) {
-            val topPose = topHit.hitPose
-            val bottomPose = bottomHit.hitPose
-            val vertical = abs(topPose.ty() - bottomPose.ty())
-            val horizontalDrift = sqrt(
-                (topPose.tx() - bottomPose.tx()) * (topPose.tx() - bottomPose.tx()) +
-                    (topPose.tz() - bottomPose.tz()) * (topPose.tz() - bottomPose.tz())
-            )
-            // Reject obvious background/floor hits. A real person's head and
-            // feet should be nearly vertically aligned in world space.
-            val height = vertical
-            if (height in 0.7f..2.8f && horizontalDrift < 0.65f) {
-                firstAnchor?.detach()
-                secondAnchor?.detach()
-                firstAnchor = createAnchorSafely(bottomHit)
-                secondAnchor = createAnchorSafely(topHit)
-                if (firstAnchor != null && secondAnchor != null) {
-                    personMeasured = true
-                    measurementOverlay.setFirstPoint(bottomScreenX, bottomScreenY, false)
-                    measurementOverlay.setSecondPoint(topScreenX, topScreenY)
-                    showDistance(height)
-                    val wall = if (wallReference) estimateWallDistance(bottomPose, frame) else null
-                    statusText.text = if (wall != null) {
-                        String.format(Locale.US, "Person detected • Wall distance %.0f cm", wall * 100f)
-                    } else {
-                        "Person detected • Height measured"
-                    }
-                }
+        if (topHit == null || bottomHit == null) {
+            statusText.text = "Person outline detected • Hold still for depth measurement."
+            return
+        }
+
+        val topPose = topHit.hitPose
+        val bottomPose = bottomHit.hitPose
+        val vertical = abs(topPose.ty() - bottomPose.ty())
+        val horizontalDrift = sqrt(
+            (topPose.tx() - bottomPose.tx()) * (topPose.tx() - bottomPose.tx()) +
+                (topPose.tz() - bottomPose.tz()) * (topPose.tz() - bottomPose.tz())
+        )
+        if (vertical !in 0.7f..2.8f || horizontalDrift >= 0.35f) {
+            statusText.text = "Person outlined • Depth points are unstable; hold still and retry."
+            return
+        }
+
+        firstAnchor?.detach()
+        secondAnchor?.detach()
+        firstAnchor = createAnchorSafely(bottomHit)
+        secondAnchor = createAnchorSafely(topHit)
+        if (firstAnchor != null && secondAnchor != null) {
+            personMeasured = true
+            measurementOverlay.setFirstPoint(bottomScreenX, bottomScreenY, false)
+            measurementOverlay.setSecondPoint(topScreenX, topScreenY)
+            showDistance(vertical)
+            val wall = if (wallReference) estimateWallDistance(bottomPose, frame) else null
+            statusText.text = if (wall != null) {
+                String.format(Locale.US, "Person detected • Wall distance %.0f cm", wall * 100f)
+            } else {
+                "Person detected • Height measured"
             }
         }
     }
 
     private fun findDepthHit(frame: Frame, x: Float, y: Float): HitResult? {
-        val offsets = floatArrayOf(0f, -12f, 12f, -24f, 24f, -36f, 36f)
+        val offsets = floatArrayOf(0f, -6f, 6f, -12f, 12f)
         // For person height, do not fall back to a wall/floor plane: that can
         // turn the head point into the wall behind the person. Use real depth
         // hits only, with a small neighborhood for temporal robustness.
@@ -791,16 +1028,18 @@ class MainActivity : AppCompatActivity() {
         val plane = findBestFloorPlane(frame)
 
         if (plane != null) {
-            accumulateFloorPlane(plane)
-            val surface = floorScanSamples.takeIf { it.size >= 4 } ?: planeWorldPoints(plane)
-            val screen = projectWorldPoints(frame, surface)
+            // A tracked ARCore plane already provides an ordered polygon. Do not
+            // draw accumulated raw samples as a path: they are not in perimeter
+            // order and create hundreds of crossing green lines.
+            val screen = projectPlanePolygon(frame, plane)
             if (screen.size >= 3) measurementOverlay.setAutoFloorOutline(screen)
+            else measurementOverlay.clearAutoFloorOutline()
 
             if ((measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA) &&
                 now - lastAutoAreaUpdateMs > 300L
             ) {
                 lastAutoAreaUpdateMs = now
-                updateAutoSurfaceMeasurement(surface)
+                updateAutoPlaneMeasurement(plane)
             }
             return
         }
@@ -927,7 +1166,7 @@ class MainActivity : AppCompatActivity() {
         segmentText.visibility = View.GONE
         distanceText.text = String.format(
             Locale.US,
-            "%.2f m²\\n%.1f ft²\\nL %.1f ft × W %.1f ft",
+            "%.2f m²\n%.1f ft²\nL %.1f ft × W %.1f ft",
             area,
             area * 10.7639104f,
             dimensions.first * 3.28084f,
@@ -1013,11 +1252,35 @@ class MainActivity : AppCompatActivity() {
                 statusText.text = "Wall scan • Aim at the wall, then tap points for exact measurements."
             }
             MeasureMode.HEIGHT -> {
-                statusText.text = "Person Height • Stand clearly in view, then scan or tap feet/head."
+                statusText.text = "Person Height • Keep head and both feet visible; wait for the blue outline."
+            }
+            MeasureMode.DOOR, MeasureMode.WINDOW -> {
+                statusText.text = measureMode.label + " • Mark four corners in order, then tap Finish."
             }
         }
     }
 
+    private fun beginAreaRedraw() {
+        if (measureMode != MeasureMode.FLOOR && measureMode != MeasureMode.AREA &&
+            measureMode != MeasureMode.KITCHEN_TOP && measureMode != MeasureMode.CUSTOM_AREA) {
+            Toast.makeText(this, "Choose a floor or area measurement first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        editableAreaWorld.clear()
+        editableAreaScreen.clear()
+        areaAnchors.forEach { it.detach() }
+        areaAnchors.clear()
+        editingAutoArea = false
+        editTool = EditTool.PEN
+        measurementOverlay.clearAutoFloorOutline()
+        measurementOverlay.setAreaPoints(emptyList())
+        findViewById<View>(R.id.areaTools)?.visibility = View.VISIBLE
+        findViewById<Button>(R.id.undoAreaPointButton)?.visibility = View.GONE
+        findViewById<Button>(R.id.finishAreaButton)?.visibility = View.GONE
+        distanceText.visibility = View.VISIBLE
+        distanceText.text = "0 corners"
+        statusText.text = "Redraw active • Tap corners around only the carpet/floor area, then Done."
+    }
     private fun setEditTool(tool: EditTool) {
         editTool = if (editTool == tool) EditTool.NONE else tool
         if (measureMode == MeasureMode.AREA || measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.KITCHEN_TOP) {
@@ -1198,13 +1461,28 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.areaTools).visibility = View.GONE
         findViewById<Button>(R.id.editMenuButton).visibility =
             if (mode == MeasureMode.FLOOR || mode == MeasureMode.AREA || mode == MeasureMode.CUSTOM_AREA || mode == MeasureMode.KITCHEN_TOP) View.VISIBLE else View.GONE
+        findViewById<View>(R.id.resultActions).visibility = View.VISIBLE
+        findViewById<Button>(R.id.finishAreaButton).text =
+            if (mode == MeasureMode.DOOR) "FINISH DOOR" else if (mode == MeasureMode.WINDOW) "FINISH WINDOW" else "CLOSE AREA"
         resetMeasurement()
+        findViewById<Button>(R.id.scanNowButton).visibility =
+            if (mode == MeasureMode.CUSTOM_AREA || mode == MeasureMode.DOOR || mode == MeasureMode.WINDOW) View.GONE else View.VISIBLE
+        statusText.text = when (mode) {
+            MeasureMode.CUSTOM_AREA -> "Custom area • Tap each floor corner, then CLOSE AREA."
+            MeasureMode.DOOR -> "Door • Tap bottom-left, bottom-right, top-right, then top-left."
+            MeasureMode.WINDOW -> "Window • Tap bottom-left, bottom-right, top-right, then top-left."
+            else -> statusText.text
+        }
     }
 
     private fun measureAt(x: Float, y: Float) {
         if (handleAreaEditTap(x, y)) return
         if (measureMode == MeasureMode.CUSTOM_AREA) {
             measureAreaAt(x, y)
+            return
+        }
+        if (measureMode == MeasureMode.DOOR || measureMode == MeasureMode.WINDOW) {
+            measureOpeningAt(x, y)
             return
         }
         if (measureMode == MeasureMode.KITCHEN_TOP) {
@@ -1267,7 +1545,7 @@ class MainActivity : AppCompatActivity() {
             MeasureMode.FLOOR, MeasureMode.KITCHEN_TOP -> sqrt(dx * dx + dz * dz)
             MeasureMode.HEIGHT -> abs(dy)
             MeasureMode.DIRECT -> sqrt(dx * dx + dy * dy + dz * dz)
-            MeasureMode.AREA, MeasureMode.CUSTOM_AREA -> 0f
+            MeasureMode.AREA, MeasureMode.CUSTOM_AREA, MeasureMode.DOOR, MeasureMode.WINDOW -> 0f
         }
 
         measurementOverlay.setSecondPoint(x, y)
@@ -1354,12 +1632,44 @@ class MainActivity : AppCompatActivity() {
             }
         if (plane == null) {
             measurementOverlay.clearAutoFloorOutline()
+            if (measureMode == MeasureMode.DIRECT && firstAnchor == null && secondAnchor == null) {
+                statusText.text = "Wall scan • Aim at a wall and move slowly until its boundary is detected."
+            }
             return
         }
         val points = projectPlanePolygon(frame, plane)
         if (points.size >= 3) {
             measurementOverlay.setAutoFloorOutline(points)
-            statusText.text = "Wall detected • Green outline follows the tracked wall."
+            if (measureMode == MeasureMode.DIRECT && firstAnchor == null && secondAnchor == null) {
+                val polygon = plane.polygon
+                polygon.rewind()
+                val values = FloatArray(polygon.remaining())
+                polygon.get(values)
+                if (values.size >= 6) {
+                    var minA = Float.MAX_VALUE
+                    var maxA = -Float.MAX_VALUE
+                    var minB = Float.MAX_VALUE
+                    var maxB = -Float.MAX_VALUE
+                    for (i in values.indices step 2) {
+                        minA = min(minA, values[i]); maxA = max(maxA, values[i])
+                        minB = min(minB, values[i + 1]); maxB = max(maxB, values[i + 1])
+                    }
+                    val width = maxA - minA
+                    val height = maxB - minB
+                    if (width > 0.05f && height > 0.05f) {
+                        distanceText.visibility = View.VISIBLE
+                        scanNowButton.visibility = View.GONE
+                        segmentText.visibility = View.GONE
+                        distanceText.text = String.format(Locale.US,
+                            "WALL  %.2f × %.2f m\n%.2f × %.2f ft  •  %.1f ft²",
+                            width, height, width * 3.28084f, height * 3.28084f,
+                            width * height * 10.7639104f)
+                        statusText.text = "Tracked wall estimate • Tap two points for a specific length."
+                    }
+                }
+            } else if (firstAnchor == null && secondAnchor == null) {
+                statusText.text = "Wall detected • Green outline is the tracked surface, not a measurement."
+            }
         } else {
             measurementOverlay.clearAutoFloorOutline()
         }
@@ -1413,7 +1723,9 @@ class MainActivity : AppCompatActivity() {
                 clip, 0, pv, 0,
                 floatArrayOf(point.x, point.y, point.z, 1f), 0
             )
-            if (clip[3] <= 0f) continue
+            // Skipping a vertex changes polygon adjacency and can draw a
+            // misleading diagonal across the entire camera view.
+            if (clip[3] <= 0f) return emptyList()
             val nx = clip[0] / clip[3]
             val ny = clip[1] / clip[3]
             points.add(
@@ -1447,7 +1759,7 @@ class MainActivity : AppCompatActivity() {
             android.opengl.Matrix.multiplyMV(worldPoint, 0, model, 0, modelPoint, 0)
             val clip = FloatArray(4)
             android.opengl.Matrix.multiplyMV(clip, 0, pv, 0, worldPoint, 0)
-            if (clip[3] <= 0f) continue
+            if (clip[3] <= 0f) return emptyList()
             val nx = clip[0] / clip[3]
             val ny = clip[1] / clip[3]
             points.add(
@@ -1459,59 +1771,177 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun measureAreaAt(x: Float, y: Float) {
-        val frame = latestFrame ?: return
-        val offsets = floatArrayOf(0f, -24f, 24f, -48f, 48f)
-        val hits = offsets.flatMap { ox ->
-            offsets.map { oy -> frame.hitTest(x + ox, y + oy) }
-        }.flatten().filter {
-            it.trackable?.trackingState == TrackingState.TRACKING
-        }
-
-        val exactHits = frame.hitTest(x, y).filter { it.trackable?.trackingState == TrackingState.TRACKING }
-        val hit = exactHits.firstOrNull {
-            (it.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING
-        } ?: exactHits.firstOrNull { it.trackable is DepthPoint }
-            ?: hits.firstOrNull {
-                (it.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING
-            } ?: hits.firstOrNull { it.trackable is DepthPoint }
-            ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
-
-        if (hit == null) {
-            Toast.makeText(
-                this,
-                "Move slowly until the surface is detected, then tap the corner.",
-                Toast.LENGTH_SHORT
-            ).show()
+        if (areaFinished) {
+            Toast.makeText(this, "This outline is closed. Tap Reset to start a new area.", Toast.LENGTH_SHORT).show()
             return
         }
-
-        createAnchorSafely(hit)?.let {
-            areaAnchors.add(it)
-            editableAreaWorld.add(LocalPoint(it.pose.tx(), it.pose.ty(), it.pose.tz()))
-            editableAreaScreen.add(x to y)
-            measurementOverlay.addAreaPoint(x, y)
-            distanceText.visibility = View.VISIBLE
-            scanNowButton.visibility = View.GONE
-            distanceText.text = areaAnchors.size.toString() + " points"
-            segmentText.visibility = View.GONE
-            findViewById<Button>(R.id.finishAreaButton).visibility =
-                if (areaAnchors.size >= 3) View.VISIBLE else View.GONE
-            statusText.text = "Point " + areaAnchors.size + " locked • Tap the next corner."
+        if (areaAnchors.size >= 40) {
+            Toast.makeText(this, "Maximum 40 corners. Close the outline or reset.", Toast.LENGTH_SHORT).show()
+            return
         }
+        if (editableAreaScreen.lastOrNull()?.let { distancePx(it.first, it.second, x, y) < dp(28).toFloat() } == true) {
+            Toast.makeText(this, "That corner is too close to the previous point. Tap the next distinct corner.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val frame = latestFrame ?: run {
+            Toast.makeText(this, "AR is still starting. Try again.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val offsets = floatArrayOf(0f, -18f, 18f, -36f, 36f)
+        val hits = offsets.flatMap { ox -> offsets.map { oy -> frame.hitTest(x + ox, y + oy) } }
+            .flatten().filter { it.trackable?.trackingState == TrackingState.TRACKING }
+        val exact = frame.hitTest(x, y).filter { it.trackable?.trackingState == TrackingState.TRACKING }
+        val hit = exact.firstOrNull { (it.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING }
+            ?: exact.firstOrNull { it.trackable is DepthPoint }
+            ?: hits.firstOrNull { (it.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING }
+            ?: hits.firstOrNull { it.trackable is DepthPoint }
+        if (hit == null) {
+            Toast.makeText(this, "Aim at the floor, move slowly until AR finds it, then tap the corner.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val anchor = createAnchorSafely(hit) ?: run {
+            Toast.makeText(this, "Could not lock this corner. Try again.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        areaAnchors.add(anchor)
+        val pose = anchor.pose
+        val point = LocalPoint(pose.tx(), pose.ty(), pose.tz())
+        editableAreaWorld.add(point)
+        val projected = projectWorldPoints(frame, listOf(point)).firstOrNull() ?: (x to y)
+        editableAreaScreen.add(projected)
+        measurementOverlay.addAreaPoint(projected.first, projected.second)
+        distanceText.visibility = View.VISIBLE
+        scanNowButton.visibility = View.GONE
+        distanceText.text = areaAnchors.size.toString() + " corners marked"
+        segmentText.visibility = View.GONE
+        findViewById<Button>(R.id.undoAreaPointButton).visibility = View.VISIBLE
+        findViewById<Button>(R.id.finishAreaButton).visibility = if (areaAnchors.size >= 3) View.VISIBLE else View.GONE
+        statusText.text = "Corner " + areaAnchors.size + " locked • Continue around the floor, then CLOSE AREA."
+    }
+
+    private fun measureOpeningAt(x: Float, y: Float) {
+        if (areaFinished) {
+            Toast.makeText(this, "This opening is closed. Tap Reset to measure another.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (areaAnchors.size >= 4) {
+            Toast.makeText(this, "Four corners are marked. Tap FINISH to calculate.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (editableAreaScreen.lastOrNull()?.let { distancePx(it.first, it.second, x, y) < dp(28).toFloat() } == true) {
+            Toast.makeText(this, "Tap the next distinct corner of the opening.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val frame = latestFrame ?: run {
+            Toast.makeText(this, "AR is still starting. Try again.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val offsets = floatArrayOf(0f, -16f, 16f, -32f, 32f)
+        val hits = offsets.flatMap { ox -> offsets.map { oy -> frame.hitTest(x + ox, y + oy) } }
+            .flatten().filter { it.trackable?.trackingState == TrackingState.TRACKING }
+        val exact = frame.hitTest(x, y).filter { it.trackable?.trackingState == TrackingState.TRACKING }
+        val hit = exact.firstOrNull { (it.trackable as? Plane)?.type == Plane.Type.VERTICAL }
+            ?: exact.firstOrNull { it.trackable is DepthPoint }
+            ?: hits.firstOrNull { (it.trackable as? Plane)?.type == Plane.Type.VERTICAL }
+            ?: hits.firstOrNull { it.trackable is DepthPoint }
+            ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
+        if (hit == null) {
+            Toast.makeText(this, "Aim at the door/window frame. Move slowly until the wall is tracked.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val anchor = createAnchorSafely(hit) ?: run {
+            Toast.makeText(this, "Could not lock this corner. Try again.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        areaAnchors.add(anchor)
+        val pose = anchor.pose
+        val point = LocalPoint(pose.tx(), pose.ty(), pose.tz())
+        editableAreaWorld.add(point)
+        val projected = projectWorldPoints(frame, listOf(point)).firstOrNull() ?: (x to y)
+        editableAreaScreen.add(projected)
+        measurementOverlay.addAreaPoint(projected.first, projected.second)
+        distanceText.visibility = View.VISIBLE
+        scanNowButton.visibility = View.GONE
+        distanceText.text = areaAnchors.size.toString() + "/4 corners"
+        findViewById<Button>(R.id.undoAreaPointButton).visibility = View.VISIBLE
+        findViewById<Button>(R.id.finishAreaButton).visibility = if (areaAnchors.size >= 4) View.VISIBLE else View.GONE
+        statusText.text = "Corner " + areaAnchors.size + "/4 • Bottom-left → bottom-right → top-right → top-left."
+    }
+
+    private fun distancePx(x1: Float, y1: Float, x2: Float, y2: Float): Float {
+        val dx = x2 - x1
+        val dy = y2 - y1
+        return sqrt(dx * dx + dy * dy)
+    }
+
+    private fun undoLastAreaPoint() {
+        if (areaAnchors.isEmpty()) return
+        areaAnchors.removeAt(areaAnchors.lastIndex).detach()
+        if (editableAreaWorld.isNotEmpty()) editableAreaWorld.removeAt(editableAreaWorld.lastIndex)
+        if (editableAreaScreen.isNotEmpty()) editableAreaScreen.removeAt(editableAreaScreen.lastIndex)
+        measurementOverlay.setAreaPoints(editableAreaScreen, false)
+        distanceText.text = if (measureMode == MeasureMode.DOOR || measureMode == MeasureMode.WINDOW) {
+            areaAnchors.size.toString() + "/4 corners"
+        } else {
+            areaAnchors.size.toString() + " corners marked"
+        }
+        findViewById<Button>(R.id.undoAreaPointButton).visibility = if (areaAnchors.isEmpty()) View.GONE else View.VISIBLE
+        findViewById<Button>(R.id.finishAreaButton).visibility = when (measureMode) {
+            MeasureMode.DOOR, MeasureMode.WINDOW -> if (areaAnchors.size >= 4) View.VISIBLE else View.GONE
+            else -> if (areaAnchors.size >= 3) View.VISIBLE else View.GONE
+        }
+        statusText.text = "Removed last corner • " + areaAnchors.size + " remaining."
     }
 
     private fun finishArea() {
-        if (areaAnchors.size < 3) return
-        val p = areaAnchors.map { it.pose }
-        var area = 0f
-        for (i in p.indices) {
-            val j = (i + 1) % p.size
-            area += p[i].tx() * p[j].tz() - p[j].tx() * p[i].tz()
+        val opening = measureMode == MeasureMode.DOOR || measureMode == MeasureMode.WINDOW
+        val required = if (opening) 4 else 3
+        if (areaAnchors.size < required) {
+            Toast.makeText(this, "Add at least " + required + " distinct corners before closing.", Toast.LENGTH_SHORT).show()
+            return
         }
-        area = abs(area) / 2f
+        val p = areaAnchors.map { it.pose }
+        areaFinished = true
         measurementOverlay.closeArea()
-        distanceText.text = String.format(Locale.US, "%.2f m²\n%.1f ft²", area, area * 10.7639104f)
-        statusText.text = "Area measured • Tap Reset for a new outline."
+        distanceText.visibility = View.VISIBLE
+        if (opening) {
+            val bottomWidth = distance3d(p[0], p[1])
+            val rightHeight = distance3d(p[1], p[2])
+            val topWidth = distance3d(p[2], p[3])
+            val leftHeight = distance3d(p[3], p[0])
+            val width = (bottomWidth + topWidth) / 2f
+            val height = (leftHeight + rightHeight) / 2f
+            val area = width * height
+            distanceText.text = String.format(Locale.US,
+                "%s  %.2f × %.2f m\n%.2f × %.2f ft  •  %.2f ft²",
+                measureMode.label.uppercase(Locale.US), width, height,
+                width * 3.28084f, height * 3.28084f, area * 10.7639104f)
+            statusText.text = measureMode.label + " measured • Manual 4-corner estimate; verify before construction."
+        } else {
+            var signedArea = 0f
+            var perimeter = 0f
+            for (i in p.indices) {
+                val j = (i + 1) % p.size
+                signedArea += p[i].tx() * p[j].tz() - p[j].tx() * p[i].tz()
+                perimeter += distance3d(p[i], p[j])
+            }
+            val area = abs(signedArea) / 2f
+            val dimensions = principalDimensions(p.map { LocalPoint(it.tx(), it.ty(), it.tz()) })
+            distanceText.text = String.format(Locale.US,
+                "AREA  %.2f m²  •  %.1f ft²\nPERIMETER  %.2f m  •  %.1f ft\nL × W  %.2f × %.2f m",
+                area, area * 10.7639104f, perimeter, perimeter * 3.2808399f, dimensions.first, dimensions.second)
+            statusText.text = "Area closed • " + p.size + " corners • Review dimensions, then Save."
+        }
+        findViewById<Button>(R.id.finishAreaButton).visibility = View.GONE
+        findViewById<Button>(R.id.undoAreaPointButton).visibility = View.GONE
+        findViewById<Button>(R.id.resetButton).visibility = View.VISIBLE
+    }
+
+    private fun distance3d(a: Pose, b: Pose): Float {
+        val dx = b.tx() - a.tx()
+        val dy = b.ty() - a.ty()
+        val dz = b.tz() - a.tz()
+        return sqrt(dx * dx + dy * dy + dz * dz)
     }
 
     private fun findBestHit(frame: Frame, x: Float, y: Float): HitResult? {
@@ -1543,8 +1973,9 @@ class MainActivity : AppCompatActivity() {
                     ?: hits.firstOrNull { horizontal(it) }
                     ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
 
-            MeasureMode.DIRECT ->
-                hits.firstOrNull { it.trackable is DepthPoint }
+            MeasureMode.DIRECT, MeasureMode.DOOR, MeasureMode.WINDOW ->
+                hits.firstOrNull { vertical(it) }
+                    ?: hits.firstOrNull { it.trackable is DepthPoint }
                     ?: hits.firstOrNull { it.trackable is Plane }
                     ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
 
@@ -1569,6 +2000,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun resetMeasurement() {
+        areaFinished = false
         firstAnchor?.detach()
         secondAnchor?.detach()
         areaAnchors.forEach { it.detach() }
@@ -1596,7 +2028,9 @@ class MainActivity : AppCompatActivity() {
         editTool = EditTool.NONE
         measurementOverlay.clear()
         findViewById<Button>(R.id.finishAreaButton)?.visibility = View.GONE
+        findViewById<Button>(R.id.undoAreaPointButton)?.visibility = View.GONE
         findViewById<View>(R.id.areaTools)?.visibility = View.GONE
+        measurementOverlay.setAreaPoints(emptyList(), false)
         findViewById<Button>(R.id.editMenuButton)?.visibility = if (
             measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA || measureMode == MeasureMode.KITCHEN_TOP
         ) View.VISIBLE else View.GONE
@@ -1916,6 +2350,60 @@ class MainActivity : AppCompatActivity() {
 
     private fun hasCameraPermission(): Boolean =
         ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+
+    private fun handleBackOrHome() {
+        val menuIds = intArrayOf(R.id.engineerMenu, R.id.interiorMenu, R.id.kitchenMenu, R.id.objectMenu)
+        if (menuIds.any { findViewById<View>(it)?.visibility == View.VISIBLE }) {
+            menuIds.forEach { findViewById<View>(it)?.visibility = View.GONE }
+            findViewById<View>(R.id.resultActions)?.visibility = View.VISIBLE
+            return
+        }
+        if (measureMode != MeasureMode.FLOOR || firstAnchor != null || areaAnchors.isNotEmpty()) {
+            selectMode(MeasureMode.FLOOR)
+            statusText.text = "Home • Ready to measure."
+        } else {
+            resetMeasurement()
+            statusText.text = "Home • Choose a workspace to begin."
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (settingsDialog?.isShowing == true) {
+            settingsDialog?.dismiss()
+            return
+        }
+        if (!::statusText.isInitialized) {
+            super.onBackPressed()
+            return
+        }
+        val menuIds = intArrayOf(R.id.engineerMenu, R.id.interiorMenu, R.id.kitchenMenu, R.id.objectMenu)
+        val openMenu = menuIds.firstOrNull { findViewById<View>(it)?.visibility == View.VISIBLE }
+        if (openMenu != null) {
+            menuIds.forEach { findViewById<View>(it)?.visibility = View.GONE }
+            findViewById<View>(R.id.resultActions)?.visibility = View.VISIBLE
+            return
+        }
+        val areaTools = findViewById<View>(R.id.areaTools)
+        if (areaTools?.visibility == View.VISIBLE) {
+            areaTools.visibility = View.GONE
+            return
+        }
+        if (areaAnchors.isNotEmpty() && !areaFinished) {
+            AlertDialog.Builder(this)
+                .setTitle("Discard current outline?")
+                .setMessage("You have marked " + areaAnchors.size + " corner(s). Keep measuring or discard this outline and return Home?")
+                .setNegativeButton("KEEP MEASURING", null)
+                .setPositiveButton("DISCARD & HOME") { _, _ -> handleBackOrHome() }
+                .show()
+            return
+        }
+        if (measureMode != MeasureMode.FLOOR || firstAnchor != null || secondAnchor != null || areaAnchors.isNotEmpty()) {
+            handleBackOrHome()
+            return
+        }
+        super.onBackPressed()
+    }
 
     override fun onDestroy() {
         subjectSegmenter?.close()

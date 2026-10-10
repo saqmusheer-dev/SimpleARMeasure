@@ -14,7 +14,7 @@ class MeasurementOverlayView @JvmOverloads constructor(
 ) : View(context, attrs) {
 
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFFFFC107.toInt()
+        color = 0xFF38BDF8.toInt()
         strokeWidth = 6f
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
@@ -22,16 +22,26 @@ class MeasurementOverlayView @JvmOverloads constructor(
     }
 
     private val greenFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x3339FF88.toInt()
+        color = 0x1A34D399.toInt()
         style = Paint.Style.FILL
     }
 
     private val greenPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF39FF88.toInt()
+        color = 0xFF34D399.toInt()
+        strokeWidth = 2.25f * resources.displayMetrics.density
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        // Keep the detected surface boundary crisp; a heavy glow makes
+        // overlapping scan edges look like extra measurements.
+    }
+
+    // A cool blue outline separates person-height guidance from the green floor mask.
+    private val personPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFF38BDF8.toInt()
         strokeWidth = 4f
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
-        setShadowLayer(8f, 0f, 0f, 0xAA000000.toInt())
+        setShadowLayer(5f, 0f, 0f, 0xAA000000.toInt())
     }
 
     private val pointPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -170,7 +180,7 @@ class MeasurementOverlayView @JvmOverloads constructor(
                 path.lineTo(point.first, point.second)
             }
             path.close()
-            canvas.drawPath(path, greenPaint)
+            canvas.drawPath(path, personPaint)
         }
 
         if (areaPoints.isNotEmpty()) {
