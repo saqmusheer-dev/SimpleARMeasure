@@ -491,7 +491,9 @@ class MainActivity : AppCompatActivity() {
 
             // Floor/area modes are scan-driven, not point-to-point. Do not overwrite
             // the scan status every frame with the old "Tap the first point" message.
-            if (measureMode != MeasureMode.FLOOR && measureMode != MeasureMode.AREA && measureMode != MeasureMode.CUSTOM_AREA) {
+            if (measureMode != MeasureMode.FLOOR && measureMode != MeasureMode.AREA &&
+                measureMode != MeasureMode.CUSTOM_AREA && measureMode != MeasureMode.DIRECT &&
+                measureMode != MeasureMode.DOOR && measureMode != MeasureMode.WINDOW) {
                 if (firstAnchor == null) {
                     statusText.text = when (measureMode) {
                         MeasureMode.HEIGHT -> "Height mode • Stand clearly in view."
@@ -1415,6 +1417,9 @@ class MainActivity : AppCompatActivity() {
             }
         if (plane == null) {
             measurementOverlay.clearAutoFloorOutline()
+            if (measureMode == MeasureMode.DIRECT && firstAnchor == null && secondAnchor == null) {
+                statusText.text = "Wall scan • Aim at a wall and move slowly until its boundary is detected."
+            }
             return
         }
         val points = projectPlanePolygon(frame, plane)
