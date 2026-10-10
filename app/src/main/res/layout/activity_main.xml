@@ -315,24 +315,32 @@
                 <Button android:id="@+id/doneAreaButton" android:layout_width="62dp" android:layout_height="34dp" android:minWidth="0dp" android:text="DONE" android:textSize="8sp" />
             </LinearLayout>
 
-            <Button
-                android:id="@+id/undoAreaPointButton"
-                android:layout_width="92dp"
-                android:layout_height="34dp"
-                android:layout_marginEnd="4dp"
-                android:minWidth="0dp"
-                android:text="UNDO POINT"
-                android:textSize="9sp"
-                android:visibility="gone" />
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="38dp"
+                android:gravity="center"
+                android:orientation="horizontal">
 
-            <Button
-                android:id="@+id/finishAreaButton"
-                android:layout_width="90dp"
-                android:layout_height="34dp"
-                android:text="FINISH"
-                android:textSize="9sp"
-                android:textStyle="bold"
-                android:visibility="gone" />
+                <Button
+                    android:id="@+id/undoAreaPointButton"
+                    android:layout_width="92dp"
+                    android:layout_height="34dp"
+                    android:layout_marginEnd="4dp"
+                    android:minWidth="0dp"
+                    android:text="UNDO POINT"
+                    android:textSize="9sp"
+                    android:visibility="gone" />
+
+                <Button
+                    android:id="@+id/finishAreaButton"
+                    android:layout_width="100dp"
+                    android:layout_height="34dp"
+                    android:minWidth="0dp"
+                    android:text="CLOSE AREA"
+                    android:textSize="9sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+            </LinearLayout>
 
             <LinearLayout
                 android:layout_width="wrap_content"
@@ -355,11 +363,11 @@
             android:orientation="horizontal"
             android:padding="2dp">
 
-            <Button android:id="@+id/engineerButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:text="▣&#10;ENGINEER" android:textSize="8sp" />
-            <Button android:id="@+id/interiorButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:text="⌂&#10;INTERIOR" android:textSize="8sp" />
-            <Button android:id="@+id/kitchenButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:text="▤&#10;KITCHEN" android:textSize="8sp" />
-            <Button android:id="@+id/objectsButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:text="◉&#10;OBJECTS" android:textSize="8sp" />
-            <Button android:id="@+id/settingsBottomButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:text="‹&#10;BACK / HOME" android:textSize="8sp" />
+            <Button android:id="@+id/engineerButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:text="⚒&#10;BUILD" android:textSize="9sp" />
+            <Button android:id="@+id/interiorButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:text="⌂&#10;DESIGN" android:textSize="9sp" />
+            <Button android:id="@+id/kitchenButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:text="▤&#10;KITCHEN" android:textSize="9sp" />
+            <Button android:id="@+id/objectsButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:text="◉&#10;OBJECTS" android:textSize="9sp" />
+            <Button android:id="@+id/settingsBottomButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:text="‹&#10;BACK" android:textSize="9sp" />
         </LinearLayout>
     </LinearLayout>
 
