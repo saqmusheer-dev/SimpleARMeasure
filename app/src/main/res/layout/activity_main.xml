@@ -2,7 +2,8 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:clipChildren="false">
+    android:clipChildren="false"
+    android:foreground="@drawable/app_frame_border">
 
     <io.github.sceneview.ar.ARSceneView
         android:id="@+id/arSceneView"
@@ -132,7 +133,7 @@
         android:orientation="vertical"
         android:padding="8dp"
         android:visibility="gone"
-        android:elevation="24dp">
+        android:elevation="8dp">
 
         <TextView
             android:layout_width="wrap_content"
@@ -177,7 +178,7 @@
         android:orientation="vertical"
         android:padding="8dp"
         android:visibility="gone"
-        android:elevation="24dp">
+        android:elevation="8dp">
 
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center_horizontal" android:text="INTERIOR DESIGN" android:textColor="#FFFFFF" android:textSize="12sp" android:textStyle="bold" />
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
@@ -200,7 +201,7 @@
         android:orientation="vertical"
         android:padding="8dp"
         android:visibility="gone"
-        android:elevation="24dp">
+        android:elevation="8dp">
 
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center_horizontal" android:text="KITCHEN" android:textColor="#FFFFFF" android:textSize="12sp" android:textStyle="bold" />
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
@@ -223,7 +224,7 @@
         android:orientation="vertical"
         android:padding="8dp"
         android:visibility="gone"
-        android:elevation="24dp">
+        android:elevation="8dp">
 
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center_horizontal" android:text="OBJECT SCAN" android:textColor="#FFFFFF" android:textSize="12sp" android:textStyle="bold" />
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
@@ -363,11 +364,11 @@
             android:orientation="horizontal"
             android:padding="2dp">
 
-            <Button android:id="@+id/engineerButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:text="⚒&#10;BUILD" android:textSize="9sp" />
-            <Button android:id="@+id/interiorButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:text="⌂&#10;DESIGN" android:textSize="9sp" />
-            <Button android:id="@+id/kitchenButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:text="▤&#10;KITCHEN" android:textSize="9sp" />
-            <Button android:id="@+id/objectsButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:text="◉&#10;OBJECTS" android:textSize="9sp" />
-            <Button android:id="@+id/settingsBottomButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:text="‹&#10;BACK" android:textSize="9sp" />
+            <Button android:id="@+id/engineerButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:padding="0dp" android:maxLines="2" android:text="⚒&#10;BUILD" android:textSize="8sp" />
+            <Button android:id="@+id/interiorButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:padding="0dp" android:maxLines="2" android:text="⌂&#10;DESIGN" android:textSize="8sp" />
+            <Button android:id="@+id/kitchenButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:padding="0dp" android:maxLines="2" android:text="▤&#10;KITCHEN" android:textSize="8sp" />
+            <Button android:id="@+id/objectsButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:padding="0dp" android:maxLines="2" android:text="◉&#10;OBJECTS" android:textSize="8sp" />
+            <Button android:id="@+id/settingsBottomButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:padding="0dp" android:maxLines="2" android:text="‹&#10;BACK" android:textSize="8sp" />
         </LinearLayout>
     </LinearLayout>
 
