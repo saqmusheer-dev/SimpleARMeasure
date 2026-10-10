@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.content.res.ColorStateList
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.location.LocationManager
@@ -392,67 +394,188 @@ class MainActivity : AppCompatActivity() {
 
     private fun showSettings() {
         settingsDialog?.dismiss()
-        val scroll = ScrollView(this)
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(8), dp(20), dp(16))
-        }
-        scroll.addView(box)
 
-        fun addSwitch(title: String, checked: Boolean, onChanged: (Boolean) -> Unit) {
-            val sw = Switch(this).apply {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(18), dp(18), dp(16))
+            background = GradientDrawable().apply {
+                setColor(0xFF0E1B2A.toInt())
+                cornerRadius = dp(22).toFloat()
+                setStroke(dp(1), 0xFF344B63.toInt())
+            }
+        }
+
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val headerText = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        headerText.addView(TextView(this).apply {
+            text = "Settings"
+            textSize = 24f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+        })
+        headerText.addView(TextView(this).apply {
+            text = "PERSON & SURFACE SCAN"
+            textSize = 10f
+            letterSpacing = 0.12f
+            setTextColor(0xFF8DA9C2.toInt())
+            setPadding(0, dp(3), 0, 0)
+        })
+        header.addView(headerText, LinearLayout.LayoutParams(0, -2, 1f))
+        val closeButton = Button(this).apply {
+            text = "×"
+            textSize = 24f
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                setColor(0xFF1C3045.toInt())
+                cornerRadius = dp(14).toFloat()
+            }
+            minWidth = dp(44)
+            minimumWidth = dp(44)
+            minHeight = dp(44)
+            minimumHeight = dp(44)
+            setPadding(0, 0, 0, dp(2))
+        }
+        header.addView(closeButton)
+        panel.addView(header)
+
+        val scroll = ScrollView(this).apply {
+            isFillViewport = false
+            clipToPadding = false
+            setPadding(0, dp(18), 0, dp(8))
+        }
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        scroll.addView(content)
+
+        fun addSection(title: String) {
+            content.addView(TextView(this).apply {
+                text = title.uppercase(Locale.US)
+                textSize = 11f
+                letterSpacing = 0.08f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                setTextColor(0xFF60A5FA.toInt())
+                setPadding(dp(2), dp(12), 0, dp(8))
+            })
+        }
+
+        fun addSetting(title: String, description: String, checked: Boolean, onChanged: (Boolean) -> Unit) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(13), dp(11), dp(10), dp(11))
+                background = GradientDrawable().apply {
+                    setColor(0xFF17283A.toInt())
+                    cornerRadius = dp(16).toFloat()
+                    setStroke(dp(1), 0xFF263D53.toInt())
+                }
+            }
+            val labels = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            labels.addView(TextView(this).apply {
                 text = title
-                textSize = 15f
+                textSize = 14f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                setTextColor(0xFFF3F7FB.toInt())
+            })
+            labels.addView(TextView(this).apply {
+                text = description
+                textSize = 11f
+                setTextColor(0xFF9EB1C4.toInt())
+                setPadding(0, dp(4), dp(6), 0)
+            })
+            row.addView(labels, LinearLayout.LayoutParams(0, -2, 1f))
+            val sw = Switch(this).apply {
                 isChecked = checked
-                setPadding(0, dp(10), 0, dp(10))
+                showText = false
+                thumbTintList = ColorStateList(
+                    arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                    intArrayOf(0xFF34D399.toInt(), 0xFF8191A1.toInt())
+                )
+                trackTintList = ColorStateList(
+                    arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                    intArrayOf(0x6634D399, 0x553D5368)
+                )
                 setOnCheckedChangeListener { _, value -> onChanged(value) }
             }
-            box.addView(sw)
+            row.addView(sw)
+            content.addView(row, LinearLayout.LayoutParams(-1, -2).apply {
+                bottomMargin = dp(9)
+            })
         }
-        addSwitch("Automatic person outline", autoPersonOutline) {
+
+        addSection("Detection")
+        addSetting("Person outline", "Trace the visible human silhouette", autoPersonOutline) {
             autoPersonOutline = it
             prefs.edit().putBoolean("auto_person", it).apply()
             if (!it) measurementOverlay.clearPersonOutline()
         }
-        addSwitch("Automatic floor boundary", autoFloorOutline) {
+        addSetting("Floor boundary", "Show the detected floor surface", autoFloorOutline) {
             autoFloorOutline = it
             prefs.edit().putBoolean("auto_floor", it).apply()
             if (!it) measurementOverlay.clearAutoFloorOutline()
         }
-        addSwitch("Use wall as height reference", wallReference) {
+        addSection("Measurement")
+        addSetting("Wall height reference", "Use a detected wall for context", wallReference) {
             wallReference = it
             prefs.edit().putBoolean("wall_reference", it).apply()
         }
-        addSwitch("Show side ruler", showRuler) {
+        addSetting("Side ruler", "Keep the scale guide visible", showRuler) {
             showRuler = it
             prefs.edit().putBoolean("show_ruler", it).apply()
             findViewById<View>(R.id.rulerView)?.visibility = if (it) View.VISIBLE else View.GONE
         }
-        box.addView(TextView(this).apply {
-            text = "MEASUREMENT TIPS"
+
+        val tip = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(13), dp(14), dp(14))
+            background = GradientDrawable().apply {
+                setColor(0xFF122C3A.toInt())
+                cornerRadius = dp(16).toFloat()
+                setStroke(dp(1), 0xFF22564F.toInt())
+            }
+        }
+        tip.addView(TextView(this).apply {
+            text = "QUICK TIP"
+            textSize = 11f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(0xFF6EE7B7.toInt())
+        })
+        tip.addView(TextView(this).apply {
+            text = "For a full room area, tap each floor corner in order and close the outline. For person height, keep the full head and both feet visible in good light."
             textSize = 12f
-            setTypeface(null, android.graphics.Typeface.BOLD)
-            setTextColor(0xFF2563EB.toInt())
-            setPadding(0, dp(18), 0, dp(4))
+            setTextColor(0xFFD0DEE8.toInt())
+            setPadding(0, dp(6), 0, 0)
         })
-        box.addView(TextView(this).apply {
-            text = "For room area, mark each floor corner clockwise and close the outline. For doors and windows, tap the four corners in order. Keep the phone steady and use good lighting."
-            textSize = 14f
-            setTextColor(0xFF555555.toInt())
-            setPadding(0, dp(4), 0, dp(12))
+        content.addView(tip, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+        panel.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        val doneButton = Button(this).apply {
+            text = "DONE"
+            textSize = 13f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                setColor(0xFF2563EB.toInt())
+                cornerRadius = dp(15).toFloat()
+            }
+            setPadding(dp(18), 0, dp(18), 0)
+        }
+        panel.addView(doneButton, LinearLayout.LayoutParams(-1, dp(48)).apply {
+            topMargin = dp(10)
         })
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Settings")
-            .setView(scroll)
-            .setPositiveButton("DONE", null)
-            .create()
+
+        val dialog = AlertDialog.Builder(this).setView(panel).create()
         settingsDialog = dialog
         dialog.setOnDismissListener { if (settingsDialog === dialog) settingsDialog = null }
+        closeButton.setOnClickListener { dialog.dismiss() }
+        doneButton.setOnClickListener { dialog.dismiss() }
         dialog.show()
         dialog.window?.apply {
-            setGravity(Gravity.START or Gravity.TOP)
-            setLayout(dp(300), android.view.WindowManager.LayoutParams.MATCH_PARENT)
-            attributes = attributes.apply { dimAmount = 0.42f }
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setGravity(Gravity.START or Gravity.CENTER_VERTICAL)
+            setLayout(dp(330), android.view.WindowManager.LayoutParams.MATCH_PARENT)
+            attributes = attributes.apply { dimAmount = 0.48f }
             addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         }
     }
@@ -547,7 +670,7 @@ class MainActivity : AppCompatActivity() {
                 ?.addOnSuccessListener { result ->
                     val current = latestFrame
                     if (current != null && measureMode == MeasureMode.HEIGHT && autoPersonOutline) {
-                        applyPersonMask(result.foregroundConfidenceMask, imageWidth, imageHeight, current)
+                        applyPersonMask(result.foregroundConfidenceMask, imageWidth, imageHeight, rotation, current)
                     }
                 }
                 ?.addOnFailureListener {
@@ -589,27 +712,53 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun applyPersonMask(mask: FloatBuffer?, imageWidth: Int, imageHeight: Int, frame: Frame) {
+    private fun applyPersonMask(
+        mask: FloatBuffer?,
+        imageWidth: Int,
+        imageHeight: Int,
+        rotationDegrees: Int,
+        frame: Frame
+    ) {
         if (mask == null || !mask.hasRemaining() || imageWidth <= 0 || imageHeight <= 0) return
 
         val confidence = FloatArray(mask.remaining())
         mask.rewind()
         mask.get(confidence)
 
-        // ML Kit's mask may use a different resolution from the camera image.
-        val aspect = imageWidth.toFloat() / imageHeight.toFloat()
-        var maskWidth = imageWidth
-        var maskHeight = imageHeight
-        if (confidence.size != imageWidth * imageHeight) {
-            maskWidth = max(1, sqrt(confidence.size.toFloat() * aspect).toInt())
+        // ML Kit receives a rotation-corrected image. Its confidence mask is in
+        // that upright orientation, while ARCore IMAGE_PIXELS uses the camera
+        // image orientation. Treating the mask as unrotated caused the outline
+        // to run down the screen and miss the person's body.
+        val rotation = ((rotationDegrees % 360) + 360) % 360
+        val quarterTurn = rotation == 90 || rotation == 270
+        val uprightWidth = if (quarterTurn) imageHeight else imageWidth
+        val uprightHeight = if (quarterTurn) imageWidth else imageHeight
+        val uprightAspect = uprightWidth.toFloat() / uprightHeight.toFloat()
+
+        var maskWidth = uprightWidth
+        var maskHeight = uprightHeight
+        if (confidence.size != uprightWidth * uprightHeight) {
+            maskWidth = max(1, sqrt(confidence.size.toFloat() * uprightAspect).toInt())
             maskHeight = max(1, confidence.size / maskWidth)
             if (maskWidth * maskHeight != confidence.size) {
-                maskHeight = max(1, sqrt(confidence.size.toFloat() / aspect).toInt())
+                maskHeight = max(1, sqrt(confidence.size.toFloat() / uprightAspect).toInt())
                 maskWidth = max(1, confidence.size / maskHeight)
             }
         }
         if (maskWidth * maskHeight > confidence.size) maskHeight = max(1, confidence.size / maskWidth)
         if (maskWidth * maskHeight < confidence.size) maskWidth = max(1, confidence.size / maskHeight)
+        if (maskWidth * maskHeight != confidence.size) return
+
+        fun uprightToRaw(x: Float, y: Float): Pair<Float, Float> {
+            val ux = x.coerceIn(0f, (uprightWidth - 1).toFloat())
+            val uy = y.coerceIn(0f, (uprightHeight - 1).toFloat())
+            return when (rotation) {
+                90 -> uy to (imageHeight - 1f - ux)
+                180 -> (imageWidth - 1f - ux) to (imageHeight - 1f - uy)
+                270 -> (imageWidth - 1f - uy) to ux
+                else -> ux to uy
+            }
+        }
 
         val xStep = max(2, maskWidth / 220)
         val yStep = max(2, maskHeight / 160)
@@ -617,16 +766,13 @@ class MainActivity : AppCompatActivity() {
         val gridHeight = (maskHeight + yStep - 1) / yStep
         if (gridWidth < 3 || gridHeight < 10) return
 
-        // Build a compact binary mask and keep only its largest connected
-        // component. Row-wise min/max over the whole image included unrelated
-        // foreground/background fragments and created long stray outline lines.
         val foreground = BooleanArray(gridWidth * gridHeight)
         for (gy in 0 until gridHeight) {
             val my = min(maskHeight - 1, gy * yStep)
             for (gx in 0 until gridWidth) {
                 val mx = min(maskWidth - 1, gx * xStep)
                 val index = my * maskWidth + mx
-                foreground[gy * gridWidth + gx] = index < confidence.size && confidence[index] > 0.62f
+                foreground[gy * gridWidth + gx] = confidence[index] > 0.58f
             }
         }
 
@@ -679,63 +825,60 @@ class MainActivity : AppCompatActivity() {
             val right = rowMax[gy]
             if (right < left || right - left < 1) continue
             val my = min(maskHeight - 1, gy * yStep)
-            val imageY = my.toFloat() / max(1, maskHeight - 1) * (imageHeight - 1)
-            val leftX = min(maskWidth - 1, left * xStep).toFloat() /
-                max(1, maskWidth - 1) * (imageWidth - 1)
-            val rightX = min(maskWidth - 1, right * xStep).toFloat() /
-                max(1, maskWidth - 1) * (imageWidth - 1)
-            leftBoundary.add(leftX to imageY)
-            rightBoundary.add(rightX to imageY)
-            if (imageY < topY) {
-                topY = imageY
+            val uprightY = my.toFloat() / max(1, maskHeight - 1) * (uprightHeight - 1)
+            val leftUprightX = min(maskWidth - 1, left * xStep).toFloat() /
+                max(1, maskWidth - 1) * (uprightWidth - 1)
+            val rightUprightX = min(maskWidth - 1, right * xStep).toFloat() /
+                max(1, maskWidth - 1) * (uprightWidth - 1)
+            val leftRaw = uprightToRaw(leftUprightX, uprightY)
+            val rightRaw = uprightToRaw(rightUprightX, uprightY)
+            leftBoundary.add(leftRaw.first to leftRaw.second)
+            rightBoundary.add(rightRaw.first to rightRaw.second)
+            if (uprightY < topY) {
+                topY = uprightY
                 topSamples.clear()
             }
-            if (imageY - topY <= imageHeight * 0.012f) topSamples.add((leftX + rightX) * 0.5f)
-            if (imageY > bottomY) {
-                bottomY = imageY
+            if (uprightY - topY <= uprightHeight * 0.012f) topSamples.add((leftUprightX + rightUprightX) * 0.5f)
+            if (uprightY > bottomY) {
+                bottomY = uprightY
                 bottomSamples.clear()
             }
-            if (bottomY - imageY <= imageHeight * 0.012f) bottomSamples.add((leftX + rightX) * 0.5f)
+            if (bottomY - uprightY <= uprightHeight * 0.012f) bottomSamples.add((leftUprightX + rightUprightX) * 0.5f)
         }
         if (leftBoundary.size < 10 || bottomY < 0f) return
 
-        val points = ArrayList<Float>((leftBoundary.size + rightBoundary.size) * 2)
-        leftBoundary.forEach { points.add(it.first); points.add(it.second) }
-        // Keep both sides in the same top-to-bottom order in the source array;
-        // MeasurementOverlayView reverses the right side when closing the path.
-        rightBoundary.forEach { points.add(it.first); points.add(it.second) }
+        val rawPoints = ArrayList<Float>((leftBoundary.size + rightBoundary.size) * 2)
+        leftBoundary.forEach { rawPoints.add(it.first); rawPoints.add(it.second) }
+        rightBoundary.forEach { rawPoints.add(it.first); rawPoints.add(it.second) }
 
-        val screenPoints = FloatArray(points.size)
+        val screenPoints = FloatArray(rawPoints.size)
         try {
             frame.transformCoordinates2d(
-                Coordinates2d.IMAGE_PIXELS, points.toFloatArray(),
+                Coordinates2d.IMAGE_PIXELS, rawPoints.toFloatArray(),
                 Coordinates2d.VIEW, screenPoints
             )
         } catch (_: Exception) {
             return
         }
         val outline = ArrayList<Pair<Float, Float>>(screenPoints.size / 2)
-        val leftCount = leftBoundary.size
-        for (i in 0 until leftCount) outline.add(screenPoints[i * 2] to screenPoints[i * 2 + 1])
-        for (i in leftCount until leftCount + rightBoundary.size) {
-            outline.add(screenPoints[i * 2] to screenPoints[i * 2 + 1])
-        }
+        for (i in screenPoints.indices step 2) outline.add(screenPoints[i] to screenPoints[i + 1])
         measurementOverlay.setPersonOutline(outline)
 
-        // Do not publish a height when the silhouette touches a frame edge:
-        // the head or feet may be outside the camera view.
-        if (topY <= imageHeight * 0.025f || bottomY >= imageHeight * 0.975f) {
-            statusText.text = "Person outline detected • Move back and include the full head and both feet."
+        // Use upright coordinates for checking that the full person is visible.
+        if (topY <= uprightHeight * 0.025f || bottomY >= uprightHeight * 0.975f) {
+            statusText.text = "Person outline detected • Include the full head and both feet."
             return
         }
 
-        val topX = if (topSamples.isNotEmpty()) topSamples.average().toFloat() else imageWidth / 2f
-        val bottomX = if (bottomSamples.isNotEmpty()) bottomSamples.average().toFloat() else imageWidth / 2f
+        val topUprightX = if (topSamples.isNotEmpty()) topSamples.average().toFloat() else uprightWidth / 2f
+        val bottomUprightX = if (bottomSamples.isNotEmpty()) bottomSamples.average().toFloat() else uprightWidth / 2f
+        val topRaw = uprightToRaw(topUprightX, topY)
+        val bottomRaw = uprightToRaw(bottomUprightX, bottomY)
         val endpoints = FloatArray(4)
         try {
             frame.transformCoordinates2d(
                 Coordinates2d.IMAGE_PIXELS,
-                floatArrayOf(topX, topY, bottomX, bottomY),
+                floatArrayOf(topRaw.first, topRaw.second, bottomRaw.first, bottomRaw.second),
                 Coordinates2d.VIEW, endpoints
             )
         } catch (_: Exception) {
@@ -749,7 +892,7 @@ class MainActivity : AppCompatActivity() {
         val topHit = findDepthHit(frame, topScreenX, topScreenY)
         val bottomHit = findDepthHit(frame, bottomScreenX, bottomScreenY)
         if (topHit == null || bottomHit == null) {
-            statusText.text = "Person outlined • Keep the full person still and well lit for depth measurement."
+            statusText.text = "Person outline detected • Hold still for depth measurement."
             return
         }
 
@@ -761,7 +904,7 @@ class MainActivity : AppCompatActivity() {
                 (topPose.tz() - bottomPose.tz()) * (topPose.tz() - bottomPose.tz())
         )
         if (vertical !in 0.7f..2.8f || horizontalDrift >= 0.35f) {
-            statusText.text = "Person outlined • Depth points are unstable; hold still and try again."
+            statusText.text = "Person outlined • Depth points are unstable; hold still and retry."
             return
         }
 
