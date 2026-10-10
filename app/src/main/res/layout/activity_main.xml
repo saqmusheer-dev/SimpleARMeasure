@@ -314,6 +314,7 @@
                 <Button android:id="@+id/eraserButton" android:layout_width="68dp" android:layout_height="34dp" android:minWidth="0dp" android:text="ERASE" android:textSize="8sp" />
                 <Button android:id="@+id/undoAreaButton" android:layout_width="62dp" android:layout_height="34dp" android:minWidth="0dp" android:text="UNDO" android:textSize="8sp" />
                 <Button android:id="@+id/doneAreaButton" android:layout_width="62dp" android:layout_height="34dp" android:minWidth="0dp" android:text="DONE" android:textSize="8sp" />
+                <Button android:id="@+id/redrawAreaButton" android:layout_width="72dp" android:layout_height="34dp" android:minWidth="0dp" android:text="REDRAW" android:textSize="8sp" />
             </LinearLayout>
 
             <LinearLayout
