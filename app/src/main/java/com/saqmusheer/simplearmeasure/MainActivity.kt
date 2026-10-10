@@ -65,7 +65,9 @@ class MainActivity : AppCompatActivity() {
         HEIGHT("Person Height"),
         DIRECT("3D"),
         AREA("Auto Area"),
-        CUSTOM_AREA("Custom Area")
+        CUSTOM_AREA("Custom Area"),
+        DOOR("Door"),
+        WINDOW("Window")
     }
 
     private lateinit var arSceneView: ARSceneView
@@ -106,6 +108,7 @@ class MainActivity : AppCompatActivity() {
     private var wallReference = true
     private var showRuler = true
     private var arStarted = false
+    private var settingsDialog: AlertDialog? = null
 
     private var subjectSegmenter: SubjectSegmenter? = null
     private var segmentationBusy = false
@@ -238,7 +241,9 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.interiorButton).setOnClickListener { showWorkspaceMenu(R.id.interiorMenu) }
         findViewById<Button>(R.id.kitchenButton).setOnClickListener { showWorkspaceMenu(R.id.kitchenMenu) }
         findViewById<Button>(R.id.objectsButton).setOnClickListener { showWorkspaceMenu(R.id.objectMenu) }
-        findViewById<Button>(R.id.settingsBottomButton).setOnClickListener { showSettings() }
+        findViewById<Button>(R.id.settingsTopButton).setOnClickListener { showSettings() }
+        findViewById<Button>(R.id.settingsBottomButton).setOnClickListener { handleBackOrHome() }
+        findViewById<Button>(R.id.undoAreaPointButton).setOnClickListener { undoLastAreaPoint() }
 
         findViewById<Button>(R.id.roomDesignButton).setOnClickListener {
             Toast.makeText(this, "Interior Design workspace • Room design tools are next.", Toast.LENGTH_SHORT).show()
@@ -264,13 +269,16 @@ class MainActivity : AppCompatActivity() {
             statusText.text = "Object Scan • Aim at an object and tap SCAN NOW."
         }
         findViewById<Button>(R.id.doorObjectButton).setOnClickListener {
-            Toast.makeText(this, "Door detection uses the upcoming object engine.", Toast.LENGTH_SHORT).show()
+            selectMode(MeasureMode.DOOR)
+            statusText.text = "Door measure • Tap bottom-left, bottom-right, top-right, then top-left."
         }
         findViewById<Button>(R.id.windowObjectButton).setOnClickListener {
-            Toast.makeText(this, "Window detection uses the upcoming object engine.", Toast.LENGTH_SHORT).show()
+            selectMode(MeasureMode.WINDOW)
+            statusText.text = "Window measure • Tap bottom-left, bottom-right, top-right, then top-left."
         }
         findViewById<Button>(R.id.furnitureObjectButton).setOnClickListener {
-            Toast.makeText(this, "Furniture detection uses the upcoming object engine.", Toast.LENGTH_SHORT).show()
+            selectMode(MeasureMode.DIRECT)
+            statusText.text = "Furniture measure • Tap two points to measure a straight-line distance."
         }
 
         measurementOverlay.setOnTouchListener { _, event ->
@@ -370,22 +378,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showSettings() {
+        settingsDialog?.dismiss()
+        val scroll = ScrollView(this)
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 4, 24, 4)
+            setPadding(dp(20), dp(8), dp(20), dp(16))
         }
+        scroll.addView(box)
 
         fun addSwitch(title: String, checked: Boolean, onChanged: (Boolean) -> Unit) {
             val sw = Switch(this).apply {
                 text = title
-                textSize = 16f
+                textSize = 15f
                 isChecked = checked
-                setPadding(0, 10, 0, 10)
+                setPadding(0, dp(10), 0, dp(10))
                 setOnCheckedChangeListener { _, value -> onChanged(value) }
             }
             box.addView(sw)
         }
-
         addSwitch("Automatic person outline", autoPersonOutline) {
             autoPersonOutline = it
             prefs.edit().putBoolean("auto_person", it).apply()
@@ -394,6 +404,7 @@ class MainActivity : AppCompatActivity() {
         addSwitch("Automatic floor boundary", autoFloorOutline) {
             autoFloorOutline = it
             prefs.edit().putBoolean("auto_floor", it).apply()
+            if (!it) measurementOverlay.clearAutoFloorOutline()
         }
         addSwitch("Use wall as height reference", wallReference) {
             wallReference = it
@@ -404,21 +415,37 @@ class MainActivity : AppCompatActivity() {
             prefs.edit().putBoolean("show_ruler", it).apply()
             findViewById<View>(R.id.rulerView)?.visibility = if (it) View.VISIBLE else View.GONE
         }
-
-        val info = TextView(this).apply {
-            text = "License: active\nAutomatic detection works on-device. Good lighting and a clear view improve results."
+        box.addView(TextView(this).apply {
+            text = "MEASUREMENT TIPS"
+            textSize = 12f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setTextColor(0xFF2563EB.toInt())
+            setPadding(0, dp(18), 0, dp(4))
+        })
+        box.addView(TextView(this).apply {
+            text = "For room area, mark each floor corner clockwise and close the outline. For doors and windows, tap the four corners in order. Keep the phone steady and use good lighting."
             textSize = 14f
             setTextColor(0xFF555555.toInt())
-            setPadding(0, 14, 0, 4)
-        }
-        box.addView(info)
-
-        AlertDialog.Builder(this)
+            setPadding(0, dp(4), 0, dp(12))
+        })
+        val dialog = AlertDialog.Builder(this)
             .setTitle("Settings")
-            .setView(box)
+            .setView(scroll)
             .setPositiveButton("DONE", null)
-            .show()
+            .create()
+        settingsDialog = dialog
+        dialog.setOnDismissListener { if (settingsDialog === dialog) settingsDialog = null }
+        dialog.show()
+        dialog.window?.apply {
+            setGravity(Gravity.START or Gravity.TOP)
+            setLayout(dp(300), android.view.WindowManager.LayoutParams.MATCH_PARENT)
+            attributes = attributes.apply { dimAmount = 0.42f }
+            addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        }
     }
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density + 0.5f).toInt()
 
     private fun startAr() {
         if (arStarted || !hasCameraPermission()) return
@@ -1217,6 +1244,11 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.areaTools).visibility = View.GONE
         findViewById<Button>(R.id.editMenuButton).visibility =
             if (mode == MeasureMode.FLOOR || mode == MeasureMode.AREA || mode == MeasureMode.CUSTOM_AREA || mode == MeasureMode.KITCHEN_TOP) View.VISIBLE else View.GONE
+        findViewById<View>(R.id.resultActions).visibility = View.VISIBLE
+        findViewById<Button>(R.id.finishAreaButton).text =
+            if (mode == MeasureMode.DOOR) "FINISH DOOR" else if (mode == MeasureMode.WINDOW) "FINISH WINDOW" else "CLOSE AREA"
+        findViewById<Button>(R.id.scanNowButton).visibility =
+            if (mode == MeasureMode.CUSTOM_AREA || mode == MeasureMode.DOOR || mode == MeasureMode.WINDOW) View.GONE else View.VISIBLE
         resetMeasurement()
     }
 
@@ -1224,6 +1256,10 @@ class MainActivity : AppCompatActivity() {
         if (handleAreaEditTap(x, y)) return
         if (measureMode == MeasureMode.CUSTOM_AREA) {
             measureAreaAt(x, y)
+            return
+        }
+        if (measureMode == MeasureMode.DOOR || measureMode == MeasureMode.WINDOW) {
+            measureOpeningAt(x, y)
             return
         }
         if (measureMode == MeasureMode.KITCHEN_TOP) {
@@ -1953,8 +1989,28 @@ class MainActivity : AppCompatActivity() {
     private fun hasCameraPermission(): Boolean =
         ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
 
+    private fun handleBackOrHome() {
+        val menuIds = intArrayOf(R.id.engineerMenu, R.id.interiorMenu, R.id.kitchenMenu, R.id.objectMenu)
+        if (menuIds.any { findViewById<View>(it)?.visibility == View.VISIBLE }) {
+            menuIds.forEach { findViewById<View>(it)?.visibility = View.GONE }
+            findViewById<View>(R.id.resultActions)?.visibility = View.VISIBLE
+            return
+        }
+        if (measureMode != MeasureMode.FLOOR || firstAnchor != null || areaAnchors.isNotEmpty()) {
+            selectMode(MeasureMode.FLOOR)
+            statusText.text = "Home • Ready to measure."
+        } else {
+            resetMeasurement()
+            statusText.text = "Home • Choose a workspace to begin."
+        }
+    }
+
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
+        if (settingsDialog?.isShowing == true) {
+            settingsDialog?.dismiss()
+            return
+        }
         if (!::statusText.isInitialized) {
             super.onBackPressed()
             return
