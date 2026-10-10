@@ -97,6 +97,7 @@ class MainActivity : AppCompatActivity() {
     private var secondAnchor: Anchor? = null
     private var measureMode = MeasureMode.FLOOR
     private val areaAnchors = mutableListOf<Anchor>()
+    private var areaFinished = false
     private val editableAreaWorld = mutableListOf<LocalPoint>()
     private val editableAreaScreen = mutableListOf<Pair<Float, Float>>()
     private var editTool = EditTool.NONE
@@ -1554,6 +1555,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun measureAreaAt(x: Float, y: Float) {
+        if (areaFinished) {
+            Toast.makeText(this, "This outline is closed. Tap Reset to start a new area.", Toast.LENGTH_SHORT).show()
+            return
+        }
         if (areaAnchors.size >= 40) {
             Toast.makeText(this, "Maximum 40 corners. Close the outline or reset.", Toast.LENGTH_SHORT).show()
             return
@@ -1599,6 +1604,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun measureOpeningAt(x: Float, y: Float) {
+        if (areaFinished) {
+            Toast.makeText(this, "This opening is closed. Tap Reset to measure another.", Toast.LENGTH_SHORT).show()
+            return
+        }
         if (areaAnchors.size >= 4) {
             Toast.makeText(this, "Four corners are marked. Tap FINISH to calculate.", Toast.LENGTH_SHORT).show()
             return
@@ -1676,6 +1685,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val p = areaAnchors.map { it.pose }
+        areaFinished = true
         measurementOverlay.closeArea()
         distanceText.visibility = View.VISIBLE
         if (opening) {
@@ -1774,6 +1784,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun resetMeasurement() {
+        areaFinished = false
         firstAnchor?.detach()
         secondAnchor?.detach()
         areaAnchors.forEach { it.detach() }
