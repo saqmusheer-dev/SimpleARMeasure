@@ -1247,9 +1247,15 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.resultActions).visibility = View.VISIBLE
         findViewById<Button>(R.id.finishAreaButton).text =
             if (mode == MeasureMode.DOOR) "FINISH DOOR" else if (mode == MeasureMode.WINDOW) "FINISH WINDOW" else "CLOSE AREA"
+        resetMeasurement()
         findViewById<Button>(R.id.scanNowButton).visibility =
             if (mode == MeasureMode.CUSTOM_AREA || mode == MeasureMode.DOOR || mode == MeasureMode.WINDOW) View.GONE else View.VISIBLE
-        resetMeasurement()
+        statusText.text = when (mode) {
+            MeasureMode.CUSTOM_AREA -> "Custom area • Tap each floor corner, then CLOSE AREA."
+            MeasureMode.DOOR -> "Door • Tap bottom-left, bottom-right, top-right, then top-left."
+            MeasureMode.WINDOW -> "Window • Tap bottom-left, bottom-right, top-right, then top-left."
+            else -> statusText.text
+        }
     }
 
     private fun measureAt(x: Float, y: Float) {
@@ -1514,76 +1520,168 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun measureAreaAt(x: Float, y: Float) {
-        val frame = latestFrame ?: return
-        val offsets = floatArrayOf(0f, -24f, 24f, -48f, 48f)
-        val hits = offsets.flatMap { ox ->
-            offsets.map { oy -> frame.hitTest(x + ox, y + oy) }
-        }.flatten().filter {
-            it.trackable?.trackingState == TrackingState.TRACKING
-        }
-
-        val exactHits = frame.hitTest(x, y).filter { it.trackable?.trackingState == TrackingState.TRACKING }
-        val hit = exactHits.firstOrNull {
-            (it.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING
-        } ?: exactHits.firstOrNull { it.trackable is DepthPoint }
-            ?: hits.firstOrNull {
-                (it.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING
-            } ?: hits.firstOrNull { it.trackable is DepthPoint }
-            ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
-
-        if (hit == null) {
-            Toast.makeText(
-                this,
-                "Move slowly until the surface is detected, then tap the corner.",
-                Toast.LENGTH_SHORT
-            ).show()
+        if (areaAnchors.size >= 40) {
+            Toast.makeText(this, "Maximum 40 corners. Close the outline or reset.", Toast.LENGTH_SHORT).show()
             return
         }
-
-        createAnchorSafely(hit)?.let {
-            areaAnchors.add(it)
-            editableAreaWorld.add(LocalPoint(it.pose.tx(), it.pose.ty(), it.pose.tz()))
-            editableAreaScreen.add(x to y)
-            measurementOverlay.addAreaPoint(x, y)
-            distanceText.visibility = View.VISIBLE
-            scanNowButton.visibility = View.GONE
-            distanceText.text = areaAnchors.size.toString() + " points"
-            segmentText.visibility = View.GONE
-            findViewById<Button>(R.id.finishAreaButton).visibility =
-                if (areaAnchors.size >= 3) View.VISIBLE else View.GONE
-            statusText.text = "Point " + areaAnchors.size + " locked • Tap the next corner."
+        if (editableAreaScreen.lastOrNull()?.let { distancePx(it.first, it.second, x, y) < dp(28).toFloat() } == true) {
+            Toast.makeText(this, "That corner is too close to the previous point. Tap the next distinct corner.", Toast.LENGTH_SHORT).show()
+            return
         }
+        val frame = latestFrame ?: run {
+            Toast.makeText(this, "AR is still starting. Try again.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val offsets = floatArrayOf(0f, -18f, 18f, -36f, 36f)
+        val hits = offsets.flatMap { ox -> offsets.map { oy -> frame.hitTest(x + ox, y + oy) } }
+            .flatten().filter { it.trackable?.trackingState == TrackingState.TRACKING }
+        val exact = frame.hitTest(x, y).filter { it.trackable?.trackingState == TrackingState.TRACKING }
+        val hit = exact.firstOrNull { (it.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING }
+            ?: exact.firstOrNull { it.trackable is DepthPoint }
+            ?: hits.firstOrNull { (it.trackable as? Plane)?.type == Plane.Type.HORIZONTAL_UPWARD_FACING }
+            ?: hits.firstOrNull { it.trackable is DepthPoint }
+        if (hit == null) {
+            Toast.makeText(this, "Aim at the floor, move slowly until AR finds it, then tap the corner.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val anchor = createAnchorSafely(hit) ?: run {
+            Toast.makeText(this, "Could not lock this corner. Try again.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        areaAnchors.add(anchor)
+        val pose = anchor.pose
+        val point = LocalPoint(pose.tx(), pose.ty(), pose.tz())
+        editableAreaWorld.add(point)
+        val projected = projectWorldPoints(frame, listOf(point)).firstOrNull() ?: (x to y)
+        editableAreaScreen.add(projected)
+        measurementOverlay.addAreaPoint(projected.first, projected.second)
+        distanceText.visibility = View.VISIBLE
+        scanNowButton.visibility = View.GONE
+        distanceText.text = areaAnchors.size.toString() + " corners marked"
+        segmentText.visibility = View.GONE
+        findViewById<Button>(R.id.undoAreaPointButton).visibility = View.VISIBLE
+        findViewById<Button>(R.id.finishAreaButton).visibility = if (areaAnchors.size >= 3) View.VISIBLE else View.GONE
+        statusText.text = "Corner " + areaAnchors.size + " locked • Continue around the floor, then CLOSE AREA."
+    }
+
+    private fun measureOpeningAt(x: Float, y: Float) {
+        if (areaAnchors.size >= 4) {
+            Toast.makeText(this, "Four corners are marked. Tap FINISH to calculate.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (editableAreaScreen.lastOrNull()?.let { distancePx(it.first, it.second, x, y) < dp(28).toFloat() } == true) {
+            Toast.makeText(this, "Tap the next distinct corner of the opening.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val frame = latestFrame ?: run {
+            Toast.makeText(this, "AR is still starting. Try again.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val offsets = floatArrayOf(0f, -16f, 16f, -32f, 32f)
+        val hits = offsets.flatMap { ox -> offsets.map { oy -> frame.hitTest(x + ox, y + oy) } }
+            .flatten().filter { it.trackable?.trackingState == TrackingState.TRACKING }
+        val exact = frame.hitTest(x, y).filter { it.trackable?.trackingState == TrackingState.TRACKING }
+        val hit = exact.firstOrNull { (it.trackable as? Plane)?.type == Plane.Type.VERTICAL }
+            ?: exact.firstOrNull { it.trackable is DepthPoint }
+            ?: hits.firstOrNull { (it.trackable as? Plane)?.type == Plane.Type.VERTICAL }
+            ?: hits.firstOrNull { it.trackable is DepthPoint }
+            ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
+        if (hit == null) {
+            Toast.makeText(this, "Aim at the door/window frame. Move slowly until the wall is tracked.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val anchor = createAnchorSafely(hit) ?: run {
+            Toast.makeText(this, "Could not lock this corner. Try again.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        areaAnchors.add(anchor)
+        val pose = anchor.pose
+        val point = LocalPoint(pose.tx(), pose.ty(), pose.tz())
+        editableAreaWorld.add(point)
+        val projected = projectWorldPoints(frame, listOf(point)).firstOrNull() ?: (x to y)
+        editableAreaScreen.add(projected)
+        measurementOverlay.addAreaPoint(projected.first, projected.second)
+        distanceText.visibility = View.VISIBLE
+        scanNowButton.visibility = View.GONE
+        distanceText.text = areaAnchors.size.toString() + "/4 corners"
+        findViewById<Button>(R.id.undoAreaPointButton).visibility = View.VISIBLE
+        findViewById<Button>(R.id.finishAreaButton).visibility = if (areaAnchors.size >= 4) View.VISIBLE else View.GONE
+        statusText.text = "Corner " + areaAnchors.size + "/4 • Bottom-left → bottom-right → top-right → top-left."
+    }
+
+    private fun distancePx(x1: Float, y1: Float, x2: Float, y2: Float): Float {
+        val dx = x2 - x1
+        val dy = y2 - y1
+        return sqrt(dx * dx + dy * dy)
+    }
+
+    private fun undoLastAreaPoint() {
+        if (areaAnchors.isEmpty()) return
+        areaAnchors.removeAt(areaAnchors.lastIndex).detach()
+        if (editableAreaWorld.isNotEmpty()) editableAreaWorld.removeAt(editableAreaWorld.lastIndex)
+        if (editableAreaScreen.isNotEmpty()) editableAreaScreen.removeAt(editableAreaScreen.lastIndex)
+        measurementOverlay.setAreaPoints(editableAreaScreen, false)
+        distanceText.text = if (measureMode == MeasureMode.DOOR || measureMode == MeasureMode.WINDOW) {
+            areaAnchors.size.toString() + "/4 corners"
+        } else {
+            areaAnchors.size.toString() + " corners marked"
+        }
+        findViewById<Button>(R.id.undoAreaPointButton).visibility = if (areaAnchors.isEmpty()) View.GONE else View.VISIBLE
+        findViewById<Button>(R.id.finishAreaButton).visibility = when (measureMode) {
+            MeasureMode.DOOR, MeasureMode.WINDOW -> if (areaAnchors.size >= 4) View.VISIBLE else View.GONE
+            else -> if (areaAnchors.size >= 3) View.VISIBLE else View.GONE
+        }
+        statusText.text = "Removed last corner • " + areaAnchors.size + " remaining."
     }
 
     private fun finishArea() {
-        if (areaAnchors.size < 3) {
-            Toast.makeText(this, "Add at least 3 corners to close an area.", Toast.LENGTH_SHORT).show()
+        val opening = measureMode == MeasureMode.DOOR || measureMode == MeasureMode.WINDOW
+        val required = if (opening) 4 else 3
+        if (areaAnchors.size < required) {
+            Toast.makeText(this, "Add at least " + required + " distinct corners before closing.", Toast.LENGTH_SHORT).show()
             return
         }
         val p = areaAnchors.map { it.pose }
-        var signedArea = 0f
-        var perimeter = 0f
-        for (i in p.indices) {
-            val j = (i + 1) % p.size
-            signedArea += p[i].tx() * p[j].tz() - p[j].tx() * p[i].tz()
-            val dx = p[j].tx() - p[i].tx()
-            val dy = p[j].ty() - p[i].ty()
-            val dz = p[j].tz() - p[i].tz()
-            perimeter += sqrt(dx * dx + dy * dy + dz * dz)
-        }
-        val area = abs(signedArea) / 2f
         measurementOverlay.closeArea()
         distanceText.visibility = View.VISIBLE
-        distanceText.text = String.format(
-            Locale.US,
-            "AREA  %.2f m²  •  %.1f ft²\nPERIMETER  %.2f m  •  %.1f ft",
-            area,
-            area * 10.7639104f,
-            perimeter,
-            perimeter * 3.2808399f
-        )
-        statusText.text = "Area closed • " + p.size + " corners • Tap Reset to measure again."
+        if (opening) {
+            val bottomWidth = distance3d(p[0], p[1])
+            val rightHeight = distance3d(p[1], p[2])
+            val topWidth = distance3d(p[2], p[3])
+            val leftHeight = distance3d(p[3], p[0])
+            val width = (bottomWidth + topWidth) / 2f
+            val height = (leftHeight + rightHeight) / 2f
+            val area = width * height
+            distanceText.text = String.format(Locale.US,
+                "%s  %.2f × %.2f m\n%.2f × %.2f ft  •  %.2f ft²",
+                measureMode.label.uppercase(Locale.US), width, height,
+                width * 3.28084f, height * 3.28084f, area * 10.7639104f)
+            statusText.text = measureMode.label + " measured • Manual 4-corner estimate; verify before construction."
+        } else {
+            var signedArea = 0f
+            var perimeter = 0f
+            for (i in p.indices) {
+                val j = (i + 1) % p.size
+                signedArea += p[i].tx() * p[j].tz() - p[j].tx() * p[i].tz()
+                perimeter += distance3d(p[i], p[j])
+            }
+            val area = abs(signedArea) / 2f
+            val dimensions = principalDimensions(p.map { LocalPoint(it.tx(), it.ty(), it.tz()) })
+            distanceText.text = String.format(Locale.US,
+                "AREA  %.2f m²  •  %.1f ft²\nPERIMETER  %.2f m  •  %.1f ft\nL × W  %.2f × %.2f m",
+                area, area * 10.7639104f, perimeter, perimeter * 3.2808399f, dimensions.first, dimensions.second)
+            statusText.text = "Area closed • " + p.size + " corners • Review dimensions, then Save."
+        }
         findViewById<Button>(R.id.finishAreaButton).visibility = View.GONE
+        findViewById<Button>(R.id.undoAreaPointButton).visibility = View.GONE
+        findViewById<Button>(R.id.resetButton).visibility = View.VISIBLE
+    }
+
+    private fun distance3d(a: Pose, b: Pose): Float {
+        val dx = b.tx() - a.tx()
+        val dy = b.ty() - a.ty()
+        val dz = b.tz() - a.tz()
+        return sqrt(dx * dx + dy * dy + dz * dz)
     }
 
     private fun findBestHit(frame: Frame, x: Float, y: Float): HitResult? {
@@ -1668,6 +1766,7 @@ class MainActivity : AppCompatActivity() {
         editTool = EditTool.NONE
         measurementOverlay.clear()
         findViewById<Button>(R.id.finishAreaButton)?.visibility = View.GONE
+        findViewById<Button>(R.id.undoAreaPointButton)?.visibility = View.GONE
         findViewById<View>(R.id.areaTools)?.visibility = View.GONE
         findViewById<Button>(R.id.editMenuButton)?.visibility = if (
             measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA || measureMode == MeasureMode.KITCHEN_TOP
