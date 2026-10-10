@@ -726,10 +726,9 @@ class MainActivity : AppCompatActivity() {
         mask.rewind()
         mask.get(confidence)
 
-        // ML Kit receives a rotation-corrected image. Its confidence mask is in
-        // that upright orientation, while ARCore IMAGE_PIXELS uses the camera
-        // image orientation. Treating the mask as unrotated caused the outline
-        // to run down the screen and miss the person's body.
+        // Keep the segmentation mask in the MediaImage pixel coordinate
+        // space used by ARCore IMAGE_PIXELS. Applying the camera rotation again
+        // misaligns the body outline and can shift the head/foot endpoints.
         // ML Kit's foreground mask uses the original MediaImage pixel grid.
         // Rotating these coordinates again displaced the outline and endpoints.
         val rotation = 0
