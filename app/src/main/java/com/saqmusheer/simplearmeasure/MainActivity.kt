@@ -1064,6 +1064,9 @@ class MainActivity : AppCompatActivity() {
             MeasureMode.HEIGHT -> {
                 statusText.text = "Person Height • Stand clearly in view, then scan or tap feet/head."
             }
+            MeasureMode.DOOR, MeasureMode.WINDOW -> {
+                statusText.text = measureMode.label + " • Mark four corners in order, then tap Finish."
+            }
         }
     }
 
