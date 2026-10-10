@@ -1520,17 +1520,34 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun finishArea() {
-        if (areaAnchors.size < 3) return
+        if (areaAnchors.size < 3) {
+            Toast.makeText(this, "Add at least 3 corners to close an area.", Toast.LENGTH_SHORT).show()
+            return
+        }
         val p = areaAnchors.map { it.pose }
-        var area = 0f
+        var signedArea = 0f
+        var perimeter = 0f
         for (i in p.indices) {
             val j = (i + 1) % p.size
-            area += p[i].tx() * p[j].tz() - p[j].tx() * p[i].tz()
+            signedArea += p[i].tx() * p[j].tz() - p[j].tx() * p[i].tz()
+            val dx = p[j].tx() - p[i].tx()
+            val dy = p[j].ty() - p[i].ty()
+            val dz = p[j].tz() - p[i].tz()
+            perimeter += sqrt(dx * dx + dy * dy + dz * dz)
         }
-        area = abs(area) / 2f
+        val area = abs(signedArea) / 2f
         measurementOverlay.closeArea()
-        distanceText.text = String.format(Locale.US, "%.2f m²\n%.1f ft²", area, area * 10.7639104f)
-        statusText.text = "Area measured • Tap Reset for a new outline."
+        distanceText.visibility = View.VISIBLE
+        distanceText.text = String.format(
+            Locale.US,
+            "AREA  %.2f m²  •  %.1f ft²\nPERIMETER  %.2f m  •  %.1f ft",
+            area,
+            area * 10.7639104f,
+            perimeter,
+            perimeter * 3.2808399f
+        )
+        statusText.text = "Area closed • " + p.size + " corners • Tap Reset to measure again."
+        findViewById<Button>(R.id.finishAreaButton).visibility = View.GONE
     }
 
     private fun findBestHit(frame: Frame, x: Float, y: Float): HitResult? {
@@ -1935,6 +1952,27 @@ class MainActivity : AppCompatActivity() {
 
     private fun hasCameraPermission(): Boolean =
         ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (!::statusText.isInitialized) {
+            super.onBackPressed()
+            return
+        }
+        val menuIds = intArrayOf(R.id.engineerMenu, R.id.interiorMenu, R.id.kitchenMenu, R.id.objectMenu)
+        val openMenu = menuIds.firstOrNull { findViewById<View>(it)?.visibility == View.VISIBLE }
+        if (openMenu != null) {
+            menuIds.forEach { findViewById<View>(it)?.visibility = View.GONE }
+            findViewById<View>(R.id.resultActions)?.visibility = View.VISIBLE
+            return
+        }
+        val areaTools = findViewById<View>(R.id.areaTools)
+        if (areaTools?.visibility == View.VISIBLE) {
+            areaTools.visibility = View.GONE
+            return
+        }
+        super.onBackPressed()
+    }
 
     override fun onDestroy() {
         subjectSegmenter?.close()
