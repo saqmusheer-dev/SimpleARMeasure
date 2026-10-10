@@ -308,20 +308,23 @@ class MainActivity : AppCompatActivity() {
             findViewById<View>(id).visibility = if (id == menuId && opening) View.VISIBLE else View.GONE
         }
 
+        // Hide the changing result card before measuring the dock height so
+        // the menu sits immediately above navigation rather than floating high.
+        findViewById<View>(R.id.resultActions)?.visibility =
+            if (opening) View.GONE else View.VISIBLE
+
         if (opening) {
-            // Anchor the contextual panel above the complete dock, including the
-            // changing result card and Android's navigation-bar inset.
-            val params = target.layoutParams as? FrameLayout.LayoutParams
             val dock = findViewById<View>(R.id.bottomDock)
-            if (params != null) {
-                params.bottomMargin = dock.height + dp(10)
-                target.layoutParams = params
+            target.post {
+                val params = target.layoutParams as? FrameLayout.LayoutParams
+                if (params != null) {
+                    params.bottomMargin = dock.height + dp(10)
+                    target.layoutParams = params
+                }
             }
         }
 
         // Never bring a contextual panel over the persistent bottom navigation.
-        findViewById<View>(R.id.resultActions)?.visibility =
-            if (opening) View.GONE else View.VISIBLE
     }
 
     private fun ensureCameraPermission() {
@@ -849,11 +852,9 @@ class MainActivity : AppCompatActivity() {
         val plane = findBestFloorPlane(frame)
 
         if (plane != null) {
-            accumulateFloorPlane(plane)
             // A tracked ARCore plane already provides an ordered polygon. Do not
-            // draw the accumulated raw samples as a path: those samples are not
-            // in perimeter order and create hundreds of crossing green lines.
-            val surface = convexHullXZ(planeWorldPoints(plane))
+            // draw accumulated raw samples as a path: they are not in perimeter
+            // order and create hundreds of crossing green lines.
             val screen = projectPlanePolygon(frame, plane)
             if (screen.size >= 3) measurementOverlay.setAutoFloorOutline(screen)
             else measurementOverlay.clearAutoFloorOutline()
