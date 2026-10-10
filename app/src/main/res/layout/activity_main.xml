@@ -58,6 +58,19 @@
         </LinearLayout>
 
         <Button
+            android:id="@+id/settingsTopButton"
+            android:layout_width="42dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="4dp"
+            android:backgroundTint="#CC102A43"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:padding="0dp"
+            android:text="⚙"
+            android:textColor="@android:color/white"
+            android:textSize="19sp" />
+
+        <Button
             android:id="@+id/projectsButton"
             android:layout_width="48dp"
             android:layout_height="48dp"
@@ -217,7 +230,10 @@
             <Button android:id="@+id/objectScanButton" android:layout_width="0dp" android:layout_height="46dp" android:layout_weight="1" android:text="Scan Object" android:textSize="10sp" />
             <Button android:id="@+id/doorObjectButton" android:layout_width="0dp" android:layout_height="46dp" android:layout_weight="1" android:text="Door" android:textSize="10sp" />
             <Button android:id="@+id/windowObjectButton" android:layout_width="0dp" android:layout_height="46dp" android:layout_weight="1" android:text="Window" android:textSize="10sp" />
-            <Button android:id="@+id/furnitureObjectButton" android:layout_width="0dp" android:layout_height="46dp" android:layout_weight="1" android:text="Furniture" android:textSize="9sp" />
+        </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+            <Button android:id="@+id/furnitureObjectButton" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="Furniture dimensions" android:textSize="10sp" />
+            <Button android:id="@+id/objectScanButton" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="Object Scan" android:textSize="10sp" />
         </LinearLayout>
     </LinearLayout>
 
@@ -303,6 +319,16 @@
             </LinearLayout>
 
             <Button
+                android:id="@+id/undoAreaPointButton"
+                android:layout_width="92dp"
+                android:layout_height="34dp"
+                android:layout_marginEnd="4dp"
+                android:minWidth="0dp"
+                android:text="UNDO POINT"
+                android:textSize="9sp"
+                android:visibility="gone" />
+
+            <Button
                 android:id="@+id/finishAreaButton"
                 android:layout_width="90dp"
                 android:layout_height="34dp"
@@ -336,7 +362,7 @@
             <Button android:id="@+id/interiorButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:text="⌂&#10;INTERIOR" android:textSize="8sp" />
             <Button android:id="@+id/kitchenButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:text="▤&#10;KITCHEN" android:textSize="8sp" />
             <Button android:id="@+id/objectsButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:text="◉&#10;OBJECTS" android:textSize="8sp" />
-            <Button android:id="@+id/settingsBottomButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:text="⚙&#10;SETTINGS" android:textSize="8sp" />
+            <Button android:id="@+id/settingsBottomButton" android:layout_width="0dp" android:layout_height="54dp" android:layout_weight="1" android:backgroundTint="#333B82F6" android:minWidth="0dp" android:text="‹&#10;BACK / HOME" android:textSize="8sp" />
         </LinearLayout>
     </LinearLayout>
 
