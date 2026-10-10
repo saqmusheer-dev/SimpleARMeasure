@@ -1328,7 +1328,7 @@ class MainActivity : AppCompatActivity() {
             MeasureMode.FLOOR, MeasureMode.KITCHEN_TOP -> sqrt(dx * dx + dz * dz)
             MeasureMode.HEIGHT -> abs(dy)
             MeasureMode.DIRECT -> sqrt(dx * dx + dy * dy + dz * dz)
-            MeasureMode.AREA, MeasureMode.CUSTOM_AREA -> 0f
+            MeasureMode.AREA, MeasureMode.CUSTOM_AREA, MeasureMode.DOOR, MeasureMode.WINDOW -> 0f
         }
 
         measurementOverlay.setSecondPoint(x, y)
@@ -1420,7 +1420,36 @@ class MainActivity : AppCompatActivity() {
         val points = projectPlanePolygon(frame, plane)
         if (points.size >= 3) {
             measurementOverlay.setAutoFloorOutline(points)
-            statusText.text = "Wall detected • Green outline follows the tracked wall."
+            if (measureMode == MeasureMode.DIRECT && firstAnchor == null && secondAnchor == null) {
+                val polygon = plane.polygon
+                polygon.rewind()
+                val values = FloatArray(polygon.remaining())
+                polygon.get(values)
+                if (values.size >= 6) {
+                    var minA = Float.MAX_VALUE
+                    var maxA = -Float.MAX_VALUE
+                    var minB = Float.MAX_VALUE
+                    var maxB = -Float.MAX_VALUE
+                    for (i in values.indices step 2) {
+                        minA = min(minA, values[i]); maxA = max(maxA, values[i])
+                        minB = min(minB, values[i + 1]); maxB = max(maxB, values[i + 1])
+                    }
+                    val width = maxA - minA
+                    val height = maxB - minB
+                    if (width > 0.05f && height > 0.05f) {
+                        distanceText.visibility = View.VISIBLE
+                        scanNowButton.visibility = View.GONE
+                        segmentText.visibility = View.GONE
+                        distanceText.text = String.format(Locale.US,
+                            "WALL  %.2f × %.2f m\n%.2f × %.2f ft  •  %.1f ft²",
+                            width, height, width * 3.28084f, height * 3.28084f,
+                            width * height * 10.7639104f)
+                        statusText.text = "Tracked wall estimate • Tap two points for a specific length."
+                    }
+                }
+            } else if (firstAnchor == null && secondAnchor == null) {
+                statusText.text = "Wall detected • Green outline is the tracked surface, not a measurement."
+            }
         } else {
             measurementOverlay.clearAutoFloorOutline()
         }
@@ -1713,8 +1742,9 @@ class MainActivity : AppCompatActivity() {
                     ?: hits.firstOrNull { horizontal(it) }
                     ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
 
-            MeasureMode.DIRECT ->
-                hits.firstOrNull { it.trackable is DepthPoint }
+            MeasureMode.DIRECT, MeasureMode.DOOR, MeasureMode.WINDOW ->
+                hits.firstOrNull { vertical(it) }
+                    ?: hits.firstOrNull { it.trackable is DepthPoint }
                     ?: hits.firstOrNull { it.trackable is Plane }
                     ?: hits.firstOrNull { it.trackable is com.google.ar.core.Point }
 
@@ -1768,6 +1798,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.finishAreaButton)?.visibility = View.GONE
         findViewById<Button>(R.id.undoAreaPointButton)?.visibility = View.GONE
         findViewById<View>(R.id.areaTools)?.visibility = View.GONE
+        measurementOverlay.setAreaPoints(emptyList(), false)
         findViewById<Button>(R.id.editMenuButton)?.visibility = if (
             measureMode == MeasureMode.FLOOR || measureMode == MeasureMode.AREA || measureMode == MeasureMode.CUSTOM_AREA || measureMode == MeasureMode.KITCHEN_TOP
         ) View.VISIBLE else View.GONE
