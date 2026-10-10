@@ -28,10 +28,11 @@ class MeasurementOverlayView @JvmOverloads constructor(
 
     private val greenPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFF34D399.toInt()
-        strokeWidth = 3.5f
+        strokeWidth = 2.25f * resources.displayMetrics.density
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
-        setShadowLayer(8f, 0f, 0f, 0xAA000000.toInt())
+        // Keep the detected surface boundary crisp; a heavy glow makes
+        // overlapping scan edges look like extra measurements.
     }
 
     // A cool blue outline separates person-height guidance from the green floor mask.
