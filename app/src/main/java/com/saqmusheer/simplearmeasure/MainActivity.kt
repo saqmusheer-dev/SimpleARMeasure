@@ -2173,6 +2173,19 @@ class MainActivity : AppCompatActivity() {
             areaTools.visibility = View.GONE
             return
         }
+        if (areaAnchors.isNotEmpty() && !areaFinished) {
+            AlertDialog.Builder(this)
+                .setTitle("Discard current outline?")
+                .setMessage("You have marked " + areaAnchors.size + " corner(s). Keep measuring or discard this outline and return Home?")
+                .setNegativeButton("KEEP MEASURING", null)
+                .setPositiveButton("DISCARD & HOME") { _, _ -> handleBackOrHome() }
+                .show()
+            return
+        }
+        if (measureMode != MeasureMode.FLOOR || firstAnchor != null || secondAnchor != null || areaAnchors.isNotEmpty()) {
+            handleBackOrHome()
+            return
+        }
         super.onBackPressed()
     }
 
