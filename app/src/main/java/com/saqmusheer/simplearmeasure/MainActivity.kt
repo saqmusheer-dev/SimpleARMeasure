@@ -27,6 +27,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.google.ar.core.Anchor
 import com.google.ar.core.Config
 import com.google.ar.core.Coordinates2d
@@ -185,6 +187,23 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupMainUi() {
         setContentView(R.layout.activity_main)
+
+        // Android 15+ edge-to-edge can place the bottom dock behind the system
+        // navigation bar. Reserve the live navigation-bar inset inside the dock.
+        val bottomDock = findViewById<View>(R.id.bottomDock)
+        val originalBottomPadding = bottomDock.paddingBottom
+        ViewCompat.setOnApplyWindowInsetsListener(bottomDock) { view, insets ->
+            val navigationBarInset =
+                insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
+            view.setPadding(
+                view.paddingLeft,
+                view.paddingTop,
+                view.paddingRight,
+                originalBottomPadding + navigationBarInset
+            )
+            insets
+        }
+        ViewCompat.requestApplyInsets(bottomDock)
 
         arSceneView = findViewById(R.id.arSceneView)
         statusText = findViewById(R.id.statusText)
